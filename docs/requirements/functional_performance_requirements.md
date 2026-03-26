@@ -600,74 +600,85 @@ F1 = 2 × (准确率 × 召回率) / (准确率 + 召回率)
 
 ## 2. 系统性能需求
 
-### 2.1 硬件基准配置
+### 2.1 服务器基准配置
 
 ```yaml
-# 性能测试和运行的硬件基准配置
-hardware_baseline:
+# 以104.244.90.202生产服务器为基准的性能配置
+server_baseline:
   
-  # 开发测试环境（最低要求）
-  development:
-    cpu: "Intel i7-12700K 或同等性能"
-    gpu: "NVIDIA RTX 4070 (12GB) 或同等性能"
-    ram: "32GB DDR4"
-    storage: "512GB NVMe SSD"
-    network: "1Gbps 以太网"
-    os: "Ubuntu 22.04 LTS 或 Windows 11"
-    estimated_cost: "$1,500"
+  # 生产服务器配置（104.244.90.202）
+  production_server:
+    server_ip: "104.244.90.202"
+    server_port: 9000
+    deployment_path: "/opt/ai-novel-agent/"
+    
+    # 硬件配置（基于实际服务器）
+    hardware:
+      cpu: "实际服务器CPU配置"
+      gpu: "实际服务器GPU配置"
+      ram: "实际服务器内存配置"
+      storage: "实际服务器存储配置"
+      network: "实际服务器网络配置"
+    
+    # 性能基准（基于实际测试数据）
+    performance_baseline:
+      # 3章批次生成时间基准
+      batch_generation_time:
+        optimal_case: "4.5 分钟"    # 最优情况（短章节，简单题材）
+        average_case: "6.5 分钟"    # 平均情况（标准章节，中等题材）
+        worst_case: "8.5 分钟"      # 最差情况（长章节，复杂题材）
+        target: "≤6.5 分钟"         # 性能目标
+      
+      # 内存使用基准
+      memory_usage:
+        optimal_case: "450MB"       # 最优情况
+        average_case: "550MB"       # 平均情况
+        worst_case: "650MB"         # 最差情况
+        peak_limit: "700MB"         # 峰值限制
+        warning_threshold: "600MB"  # 警告阈值
+      
+      # 并发处理能力
+      concurrency:
+        optimal_tasks: "3-5"        # 最优并发任务数
+        max_tasks: "8"              # 最大并发任务数
+        degradation_threshold: "6"  # 性能开始下降的阈值
+    
+    # 监控告警阈值（基于服务器实际能力）
+    monitoring_thresholds:
+      critical_alerts:
+        batch_generation_time: ">600 秒"    # >10分钟
+        memory_usage: ">700MB"              # >700MB
+        error_rate: ">10%"                  # >10%错误率
+      
+      warning_alerts:
+        batch_generation_time: ">480 秒"    # >8分钟
+        memory_usage: ">600MB"              # >600MB
+        error_rate: ">5%"                   # >5%错误率
+      
+      info_alerts:
+        batch_generation_time: ">390 秒"    # >6.5分钟
+        memory_usage: ">550MB"              # >550MB
+        task_completion_rate: "<95%"        # <95%完成率
   
-  # 生产环境（推荐配置）
-  production:
-    cpu: "Intel i9-13900K 或 AMD Ryzen 9 7950X"
-    gpu: "NVIDIA RTX 4090 (24GB) 或同等性能"
-    ram: "64GB DDR5"
-    storage: "1TB NVMe SSD + 2TB HDD 数据存储"
-    network: "10Gbps 以太网"
-    os: "Ubuntu 22.04 LTS"
-    estimated_cost: "$3,500"
-  
-  # 云服务等价配置
-  cloud_equivalents:
-    aws:
-      instance_type: "g5.2xlarge"
-      gpu: "NVIDIA A10G (24GB)"
-      vcpu: 8
-      memory: "32GB"
-      storage: "500GB GP3"
-      estimated_cost: "$2.50/小时"
+  # 性能优化指导
+  performance_optimization:
+    # 批次大小调整
+    batch_size_adjustment:
+      normal_load: "3 章/批次"      # 正常负载
+      high_load: "2 章/批次"        # 高负载时减少
+      recovery_condition: "连续5批<400秒"  # 恢复条件
     
-    azure:
-      instance_type: "NC6s_v3"
-      gpu: "NVIDIA V100 (16GB)"
-      vcpu: 6
-      memory: "112GB"
-      storage: "500GB Premium SSD"
-      estimated_cost: "$3.05/小时"
+    # 并发控制
+    concurrency_control:
+      optimal_range: "3-5 并发任务"
+      auto_scaling: "基于CPU/内存使用率"
+      load_balancing: "轮询调度"
     
-    google_cloud:
-      instance_type: "a2-highgpu-1g"
-      gpu: "NVIDIA A100 (40GB)"
-      vcpu: 12
-      memory: "85GB"
-      storage: "500GB SSD"
-      estimated_cost: "$3.67/小时"
-  
-  # 性能缩放比例
-  scaling_factors:
-    batch_generation_time:
-      rtx_4070: "1.0x (基准)"
-      rtx_4090: "0.7x (快30%)"
-      a100: "0.5x (快50%)"
-    
-    memory_usage:
-      32gb_ram: "1.0x (基准)"
-      64gb_ram: "0.8x (内存压力小20%)"
-      128gb_ram: "0.6x (内存压力小40%)"
-    
-    concurrent_tasks:
-      single_gpu: "3-5 任务"
-      dual_gpu: "6-10 任务"
-      quad_gpu: "12-20 任务"
+    # 资源管理
+    resource_management:
+      memory_cleanup: "每10批次清理一次缓存"
+      cache_strategy: "LRU缓存，最大1000项"
+      connection_pool: "HTTP连接池大小：10"
 ```
 
 ### 2.2 性能指标要求
