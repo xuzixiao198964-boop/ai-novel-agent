@@ -98,6 +98,493 @@ class TestDataCollectorInterface:
     @pytest.mark.asyncio
     async def test_collect_daily_data_error_handling(self, data_collector):
         """测试错误处理接口"""
+
+## 2.1.2 数据源管理接口测试（新增）
+```python
+# tests/unit/test_trend_data_source_manager.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+import asyncio
+
+from app.agents.trend.data_source_manager import DataSourceManager, QualityValidator
+
+class TestDataSourceManagerInterface:
+    """数据源管理器接口测试"""
+    
+    @pytest.fixture
+    def data_source_manager(self):
+        return DataSourceManager(config_path="test_config/data_sources.yaml")
+    
+    @pytest.mark.asyncio
+    async def test_collect_data_interface(self, data_source_manager):
+        """测试多数据源收集接口"""
+        # 模拟数据源
+        mock_source_qidian = AsyncMock()
+        mock_source_qidian.collect.return_value = {
+            "heat_index": 95.2,
+            "reader_demographics": {"18-25": 35, "26-35": 45}
+        }
+        
+        mock_source_jinjiang = AsyncMock()
+        mock_source_jinjiang.collect.return_value = {
+            "heat_index": 88.7,
+            "reader_demographics": {"18-25": 40, "26-35": 40}
+        }
+        
+        data_source_manager.sources = {
+            "qidian": mock_source_qidian,
+            "jinjiang": mock_source_jinjiang
+        }
+        
+        # 调用接口
+        result = await data_source_manager.collect_data(use_cache=False)
+        
+        # 验证接口契约
+        assert isinstance(result, dict)
+        required_fields = ["data", "quality_report", "source_qualities", "overall_quality", "timestamp"]
+        for field in required_fields:
+            assert field in result
+        
+        # 验证数据合并
+        assert "heat_index" in result["data"]
+        assert "reader_demographics" in result["data"]
+        
+        # 验证质量报告
+        assert isinstance(result["quality_report"], dict)
+        assert "overall_score" in result["quality_report"]
+        
+        # 验证源质量记录
+        assert "qidian" in result["source_qualities"]
+        assert "jinjiang" in result["source_qualities"]
+    
+    @pytest.mark.asyncio
+    async def test_data_quality_validation_interface(self):
+        """测试数据质量验证接口"""
+        validator = QualityValidator()
+        
+        test_data = {
+            "heat_index": 95.2,
+            "read_count": 10000,
+            "timestamp": datetime.now().isoformat(),
+            "platform": "qidian"
+        }
+        
+        # 调用接口
+        validation_result = validator.validate(test_data, "qidian")
+        
+        # 验证接口契约
+        assert isinstance(validation_result, dict)
+        assert "overall_score" in validation_result
+        assert "metrics" in validation_result
+        assert "passed_all" in validation_result
+        
+        # 验证质量指标
+        expected_metrics = ["completeness", "timeliness", "accuracy", "consistency", "uniqueness"]
+        for metric in expected_metrics:
+            assert metric in validation_result["metrics"]
+            
+            metric_info = validation_result["metrics"][metric]
+            assert "score" in metric_info
+            assert "passed" in metric_info
+            assert "threshold" in metric_info
+        
+        # 验证分数范围
+        assert 0 <= validation_result["overall_score"] <= 1
+        
+        # 验证阈值检查
+        for metric_name, metric_info in validation_result["metrics"].items():
+            if "score" in metric_info and "threshold" in metric_info:
+                score = metric_info["score"]
+                threshold = metric_info["threshold"]
+                passed = metric_info["passed"]
+                
+                if score >= threshold:
+                    assert passed == True
+                else:
+                    assert passed == False
+    
+    def test_similarity_calculation_interface(self):
+        """测试相似度计算接口"""
+        from app.agents.trend.similarity_calculator import SentenceBERTSimilarity
+        
+        # 使用模拟或简化版本进行测试
+        calculator = SentenceBERTSimilarity(model_name="test_model")
+        
+        test_cases = [
+            {
+                "text1": "都市现实",
+                "text2": "都市言情",
+                "expected_high": True  # 应该相似度高
+            },
+            {
+                "text1": "科幻未来",
+                "text2": "历史军事", 
+                "expected_low": True   # 应该相似度低
+            },
+            {
+                "text1": "",
+                "text2": "测试题材",
+                "expected_zero": True  # 空文本应该返回0
+            }
+        ]
+        
+        for test_case in test_cases:
+            similarity = calculator.calculate_similarity(
+                test_case["text1"], 
+                test_case["text2"],
+                use_cache=False
+            )
+            
+            # 验证接口契约
+            assert isinstance(similarity, float)
+            assert 0 <= similarity <= 1
+            
+            # 验证预期行为
+            if test_case.get("expected_high"):
+                assert similarity > 0.7
+            elif test_case.get("expected_low"):
+                assert similarity < 0.3
+            elif test_case.get("expected_zero"):
+                assert similarity == 0.0
+    
+    @pytest.mark.asyncio
+    async def test_fallback_mechanism_interface(self, data_source_manager):
+        """测试降级机制接口"""
+        # 模拟数据源失败
+        mock_source = AsyncMock()
+        mock_source.collect.side_effect = Exception("API调用失败")
+        
+        data_source_manager.sources = {"test_source": mock_source}
+        
+        # 模拟降级处理器
+        with patch.object(data_source_manager.fallback_handler, 'get_fallback_data') as mock_fallback:
+            mock_fallback.return_value = {
+                "heat_index": 50.0,
+                "is_fallback": True
+            }
+            
+            # 调用接口
+            result = await data_source_manager.collect_data(use_cache=False)
+            
+            # 验证降级数据被使用
+            assert result["data"]["is_fallback"] == True
+            assert result["data"]["heat_index"] == 50.0
+            
+            # 验证质量分数较低（因为是降级数据）
+            assert result["source_qualities"]["test_source"] < 0.7
+```
+
+## 2.2 PlannerAgent单元测试（增强版）
+
+### 2.2.1 差异化审核器接口测试（新增）
+```python
+# tests/unit/test_planner_differentiated_reviewer.py
+import pytest
+from unittest.mock import Mock, patch
+
+from app.agents.planner.differentiated_reviewer import DifferentiatedReviewSystem, GenreTypeDetector
+
+class TestDifferentiatedReviewSystemInterface:
+    """差异化审核系统接口测试"""
+    
+    @pytest.fixture
+    def review_system(self):
+        return DifferentiatedReviewSystem(config_dir="test_config/differentiated")
+    
+    @pytest.fixture
+    def test_plan_data(self):
+        """创建测试策划数据"""
+        return {
+            "title": "测试小说",
+            "structure": {
+                "act1": "开端",
+                "act2": "发展", 
+                "act3": "高潮"
+            },
+            "characters": [
+                {"name": "主角", "personality": "勇敢", "growth_arc": "从平凡到英雄"}
+            ],
+            "plot": {
+                "main_conflict": "权力斗争",
+                "key_events": ["相遇", "冲突", "解决"]
+            }
+        }
+    
+    def test_determine_genre_type_interface(self, review_system):
+        """测试题材类型检测接口"""
+        test_cases = [
+            {
+                "genre_info": {
+                    "heat_index": 95.5,
+                    "reader_maturity": 0.8,
+                    "market_stability": 0.85
+                },
+                "expected_type": "high_quality_genre"
+            },
+            {
+                "genre_info": {
+                    "growth_rate": 0.25,
+                    "market_share": 0.05,
+                    "innovation_score": 0.7
+                },
+                "expected_type": "experimental_genre"
+            },
+            {
+                "genre_info": {
+                    "production_rate": 0.6,
+                    "reader_retention": 0.7,
+                    "monetization": 0.75
+                },
+                "expected_type": "commercial_genre"
+            },
+            {
+                "genre_info": {
+                    "critical_acclaim": 0.7,
+                    "award_count": 2,
+                    "depth_score": 0.8
+                },
+                "expected_type": "literary_genre"
+            }
+        ]
+        
+        for test_case in test_cases:
+            # 模拟检测器
+            with patch.object(review_system.genre_detector, 'detect') as mock_detect:
+                mock_detect.return_value = test_case["expected_type"]
+                
+                # 调用审核
+                result = review_system.review_story_plan(
+                    plan_data={},
+                    genre_info=test_case["genre_info"]
+                )
+                
+                # 验证接口契约
+                assert "genre_type" in result
+                assert result["genre_type"] == test_case["expected_type"]
+                assert "standard_applied" in result
+    
+    def test_apply_differentiated_standards_interface(self, review_system, test_plan_data):
+        """测试差异化标准应用接口"""
+        # 测试不同题材类型的审核标准差异
+        
+        test_scenarios = [
+            {
+                "genre_type": "high_quality_genre",
+                "expected_threshold": 85,
+                "expected_strict_dimensions": ["structure", "character"]
+            },
+            {
+                "genre_type": "experimental_genre", 
+                "expected_threshold": 70,
+                "expected_innovation_weight": "high"
+            },
+            {
+                "genre_type": "commercial_genre",
+                "expected_threshold": 75,
+                "expected_market_weight": "high"
+            },
+            {
+                "genre_type": "literary_genre",
+                "expected_threshold": 80,
+                "expected_language_weight": "high"
+            }
+        ]
+        
+        for scenario in test_scenarios:
+            # 模拟审核模型
+            mock_results = {
+                "structure": {"score": 80},
+                "character": {"score": 85},
+                "plot": {"score": 75},
+                "market": {"score": 70},
+                "style": {"score": 80},
+                "innovation": {"score": 65}
+            }
+            
+            with patch.object(review_system, '_calculate_dimension_scores') as mock_calc:
+                with patch.object(review_system.genre_detector, 'detect') as mock_detect:
+                    
+                    mock_detect.return_value = scenario["genre_type"]
+                    mock_calc.return_value = mock_results
+                    
+                    # 调用审核
+                    result = review_system.review_story_plan(
+                        plan_data=test_plan_data,
+                        genre_info={"name": "测试题材"}
+                    )
+                    
+                    # 验证差异化标准应用
+                    assert result["total_score"] >= scenario["expected_threshold"]
+                    
+                    # 验证权重调整
+                    if "expected_strict_dimensions" in scenario:
+                        for dimension in scenario["expected_strict_dimensions"]:
+                            assert dimension in result["dimension_scores"]
+                            # 高质量题材的结构和人物分数应该较高
+                            if scenario["genre_type"] == "high_quality_genre":
+                                assert result["dimension_scores"][dimension] >= 75
+    
+    def test_special_rules_checking_interface(self, review_system, test_plan_data):
+        """测试特殊规则检查接口"""
+        # 测试不同题材类型的特殊规则
+        
+        test_cases = [
+            {
+                "genre_type": "high_quality_genre",
+                "violation_scenario": {
+                    "has_logic_hole": True,
+                    "character_inconsistent": True
+                },
+                "expected_fail": True
+            },
+            {
+                "genre_type": "experimental_genre",
+                "violation_scenario": {
+                    "too_innovative": False,  # 实验性题材允许创新
+                    "market_risk": True       # 允许市场风险
+                },
+                "expected_fail": False  # 应该通过
+            },
+            {
+                "genre_type": "commercial_genre", 
+                "violation_scenario": {
+                    "plot_too_slow": True,    # 商业化题材节奏不能慢
+                    "formulaic": False        # 允许套路化
+                },
+                "expected_fail": True
+            }
+        ]
+        
+        for test_case in test_cases:
+            # 模拟规则检查
+            with patch.object(review_system, '_check_special_rules') as mock_check:
+                with patch.object(review_system.genre_detector, 'detect') as mock_detect:
+                    
+                    mock_detect.return_value = test_case["genre_type"]
+                    
+                    if test_case["expected_fail"]:
+                        # 模拟规则违规
+                        mock_check.return_value = [
+                            {
+                                "rule": "测试规则",
+                                "severity": "critical",
+                                "description": "严重违规"
+                            }
+                        ]
+                    else:
+                        # 模拟无违规
+                        mock_check.return_value = []
+                    
+                    # 调用审核
+                    result = review_system.review_story_plan(
+                        plan_data=test_plan_data,
+                        genre_info={"name": "测试题材"}
+                    )
+                    
+                    # 验证规则检查结果
+                    if test_case["expected_fail"]:
+                        assert result["passed"] == False
+                        assert len(result["rule_violations"]) > 0
+                        assert result["requires_revision"] == True
+                    else:
+                        # 如果没有严重违规，应该通过
+                        assert result["passed"] == True or result["requires_revision"] == False
+    
+    def test_feedback_generation_interface(self, review_system, test_plan_data):
+        """测试反馈生成接口"""
+        # 模拟审核结果
+        mock_dimension_results = {
+            "structure": {
+                "score": 85,
+                "strengths": ["结构完整", "三幕式清晰"],
+                "issues": [],
+                "suggestions": []
+            },
+            "character": {
+                "score": 60,  # 分数较低
+                "strengths": ["主角鲜明"],
+                "issues": ["配角单薄", "成长弧线不清晰"],
+                "suggestions": ["加强配角塑造", "明确成长阶段"]
+            },
+            "plot": {
+                "score": 75,
+                "strengths": ["情节吸引人"],
+                "issues": ["节奏稍快"],
+                "suggestions": ["增加过渡段落"]
+            }
+        }
+        
+        with patch.object(review_system, '_calculate_dimension_scores') as mock_calc:
+            with patch.object(review_system.genre_detector, 'detect') as mock_detect:
+                
+                mock_detect.return_value = "high_quality_genre"
+                mock_calc.return_value = {k: v["score"] for k, v in mock_dimension_results.items()}
+                
+                # 调用审核
+                result = review_system.review_story_plan(
+                    plan_data=test_plan_data,
+                    genre_info={"name": "都市现实"}
+                )
+                
+                # 验证反馈接口契约
+                assert "feedback" in result
+                feedback = result["feedback"]
+                
+                required_fields = ["summary", "strengths", "weaknesses", "rule_violations"]
+                for field in required_fields:
+                    assert field in feedback
+                
+                # 验证反馈内容
+                assert isinstance(feedback["strengths"], list)
+                assert isinstance(feedback["weaknesses"], list)
+                
+                # 验证强弱项识别
+                assert len(feedback["strengths"]) > 0  # 应该有强项
+                assert len(feedback["weaknesses"]) > 0  # 应该有弱项
+                
+                # 验证具体反馈
+                for strength in feedback["strengths"]:
+                    assert "dimension" in strength
+                    assert "score" in strength
+                    assert strength["score"] >= 80  # 强项分数应该高
+                
+                for weakness in feedback["weaknesses"]:
+                    assert "dimension" in weakness
+                    assert "score" in weakness
+                    assert weakness["score"] < 70  # 弱项分数应该低
+                    assert "suggestions" in weakness
+                    assert len(weakness["suggestions"]) > 0  # 应该有改进建议
+```
+
+### 2.2.2 监控告警系统接口测试（新增）
+```python
+# tests/unit/test_monitoring_alert_system.py
+import pytest
+from datetime import datetime, timedelta
+from unittest.mock import Mock, patch
+
+from app.agents.monitor.metrics_collector import MetricsCollector
+from app.agents.alert.rule_engine import AlertRuleEngine
+from app.agents.alert.auto_recovery_manager import AutoRecoveryManager
+
+class TestMonitoringAlertSystemInterface:
+    """监控告警系统接口测试"""
+    
+    @pytest.fixture
+    def metrics_collector(self):
+        return MetricsCollector()
+    
+    @pytest.fixture
+    def alert_rule_engine(self):
+        return AlertRuleEngine(config_path="test_config/alert_rules.yaml")
+    
+    @pytest.fixture
+    def sample_metrics(self):
+        """创建测试指标数据"""
+        return {
+            "performance": {
+                "batch_generation_time": 550,  # 9.17分钟（超过8分钟警告阈值）
+                "memory_usage": 620,           # MB（超过
         # 模拟平台抛出异常
         mock_collector = AsyncMock(spec=BasePlatformCollector)
         mock_collector.collect.side_effect = Exception("网络错误")

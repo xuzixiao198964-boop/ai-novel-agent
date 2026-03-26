@@ -8,1821 +8,757 @@
 - **状态驱动**：中央状态管理器协调各Agent状态和进度
 - **数据持久化**：所有中间产物和最终结果持久化存储
 - **错误隔离**：单个Agent失败不影响整体流水线，支持重试
+- **差异化处理**：支持不同题材类型的差异化审核标准
+- **全面监控**：内置性能、质量、业务三级监控体系
 
 ### 1.2 系统架构图
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Web前端 (FastAPI + 静态页面)              │
-└─────────────────────────────────────────────────────────────┘
-                               │
-┌─────────────────────────────────────────────────────────────┐
-│                    API网关层 (FastAPI路由)                   │
-│  ├─ 任务管理API (创建/启动/停止/查询)                        │
-│  ├─ 进度查询API (整体进度/各Agent详情)                       │
-│  ├─ 文件管理API (上传/下载/预览)                            │
-│  └─ 系统管理API (运行模式/配置/健康检查)                     │
-└─────────────────────────────────────────────────────────────┘
-                               │
-┌─────────────────────────────────────────────────────────────┐
-│                    Agent调度层 (Pipeline控制器)              │
-│  ├─ 流水线执行器 (按顺序触发Agent)                          │
-│  ├─ 状态同步器 (实时更新Agent状态)                          │
-│  ├─ 错误处理器 (重试/降级/恢复)                             │
-│  └─ 进度追踪器 (计算整体完成度)                             │
-└─────────────────────────────────────────────────────────────┘
-                               │
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Web前端 (FastAPI + 静态页面)                  │
+│  ├─ 任务管理界面 (创建/监控/下载)                                    │
+│  ├─ 实时监控仪表盘 (性能/质量/业务指标)                              │
+│  ├─ 配置管理界面 (差异化标准/告警规则)                               │
+│  └─ 报告查看界面 (日报/周报/月报)                                    │
+└─────────────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────────────────────────────────────────────────────────────┐
+│                         API网关层 (FastAPI路由)                       │
+│  ├─ 任务管理API (创建/启动/停止/查询)                                │
+│  ├─ 进度查询API (整体进度/各Agent详情)                               │
+│  ├─ 文件管理API (上传/下载/预览)                                    │
+│  ├─ 系统管理API (运行模式/配置/健康检查)                             │
+│  ├─ 监控数据API (实时指标/历史数据)                                  │
+│  └─ 告警管理API (规则配置/告警历史)                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Agent调度层 (Pipeline控制器)                  │
+│  ├─ 流水线执行器 (按顺序触发Agent)                                  │
+│  ├─ 状态同步器 (实时更新Agent状态)                                  │
+│  ├─ 错误处理器 (重试/降级/恢复)                                     │
+│  ├─ 进度追踪器 (计算整体完成度)                                     │
+│  ├─ 差异化审核器 (根据题材类型应用不同标准)                          │
+│  └─ 性能优化器 (动态调整批次大小/并发数)                             │
+└─────────────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐
+│  TrendAgent │ StyleAgent  │ PlannerAgent│ WriterAgent │ MonitorAgent│
+│ (趋势分析)  │ (风格解析)  │ (策划)      │ (写作)      │ (监控)      │
+└─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘
+                                     │
 ┌─────────────┬─────────────┬─────────────┬─────────────┐
-│  TrendAgent │ StyleAgent  │ PlannerAgent│ WriterAgent │
-│ (趋势分析)  │ (风格解析)  │ (策划)      │ (写作)      │
+│ PolishAgent │ AuditorAgent│ ReviserAgent│ AlertAgent  │
+│ (润色)      │ (审计)      │ (修订)      │ (告警)      │
 └─────────────┴─────────────┴─────────────┴─────────────┘
-                               │
-┌─────────────┬─────────────┬─────────────┐
-│ PolishAgent │ AuditorAgent│ ReviserAgent│
-│ (润色)      │ (审计)      │ (修订)      │
-└─────────────┴─────────────┴─────────────┘
-                               │
-┌─────────────────────────────────────────────────────────────┐
-│                    数据存储层 (文件系统 + 内存状态)           │
-│  ├─ 任务目录结构 (按task_id组织)                            │
-│  ├─ Agent输出文件 (JSON/Markdown格式)                       │
-│  ├─ 进度状态文件 (实时更新)                                 │
-│  ├─ 日志文件 (按Agent分割)                                  │
-│  └─ 长期记忆库 (7个真相文件)                                │
-└─────────────────────────────────────────────────────────────┘
-                               │
-┌─────────────────────────────────────────────────────────────┐
-│                    外部服务层                                │
-│  ├─ LLM API (DeepSeek/OpenAI兼容接口)                       │
-│  ├─ 小说平台API (趋势数据爬取)                              │
-│  └─ 系统服务 (systemd守护进程)                              │
-└─────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────────────────────────────────────────────────────────────┐
+│                         数据存储层 (多级存储)                         │
+│  ├─ 任务目录结构 (按task_id组织)                                    │
+│  ├─ Agent输出文件 (JSON/Markdown格式)                               │
+│  ├─ 进度状态文件 (实时更新)                                         │
+│  ├─ 日志文件 (按Agent分割)                                          │
+│  ├─ 监控数据存储 (时序数据库)                                       │
+│  ├─ 告警历史存储 (关系型数据库)                                     │
+│  ├─ 配置存储 (配置文件+数据库)                                      │
+│  └─ 长期记忆库 (7个真相文件)                                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────────────────────────────────────────────────────────────┐
+│                         外部服务层                                   │
+│  ├─ LLM API (DeepSeek/OpenAI兼容接口)                               │
+│  ├─ 小说平台API (多平台数据源配置)                                  │
+│  ├─ 监控服务 (Prometheus + Grafana + ELK)                           │
+│  ├─ 告警服务 (Slack/邮件/SMS/Webhook)                              │
+│  ├─ 云服务 (AWS/Azure/Google Cloud)                                │
+│  └─ 系统服务 (systemd守护进程 + 容器编排)                            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### 1.3 新增组件说明
+
+#### 1.3.1 MonitorAgent（监控Agent）
+- **职责**：实时收集系统性能、质量、业务指标
+- **数据源**：各Agent执行数据、系统资源数据、外部监控数据
+- **输出**：时序数据库指标、实时仪表盘数据、定期报告
+
+#### 1.3.2 AlertAgent（告警Agent）
+- **职责**：根据监控数据触发告警，执行自动恢复
+- **告警规则**：三级告警体系（严重/警告/信息）
+- **恢复机制**：性能恢复、质量恢复、系统恢复
+
+#### 1.3.3 差异化审核器
+- **职责**：根据题材类型应用不同的审核标准
+- **标准类型**：高质量成熟、实验性创新、商业化量产、文学性精品
+- **动态调整**：根据历史表现动态优化审核阈值
+
+#### 1.3.4 性能优化器
+- **职责**：根据系统负载动态调整参数
+- **调整项**：批次大小、并发数、缓存策略、资源分配
+- **目标**：在性能和质量之间找到最优平衡
 
 ## 2. Agent详细设计
 
-### 2.1 TrendAgent（趋势分析Agent）
+### 2.1 TrendAgent（趋势分析Agent） - 增强版
 
-#### 2.1.1 模块结构
+#### 2.1.1 模块结构更新
 ```
 trend_agent/
 ├── __init__.py
-├── main.py              # 主执行逻辑
-├── data_collector.py    # 数据采集模块
-├── genre_analyzer.py    # 题材分析模块
-├── trend_predictor.py   # 趋势预测模块
-├── genre_library.py     # 题材库管理
-├── cache_manager.py     # 缓存管理
-└── output_formatter.py  # 输出格式化
+├── main.py                    # 主执行逻辑
+├── data_collector.py          # 多平台数据采集
+├── genre_analyzer.py          # 题材分析模块
+├── trend_predictor.py         # 趋势预测模块
+├── genre_library.py           # 题材库管理
+├── cache_manager.py           # 缓存管理
+├── output_formatter.py        # 输出格式化
+├── data_source_manager.py     # 数据源管理（新增）
+├── similarity_calculator.py   # 相似度计算（增强）
+├── quality_validator.py       # 数据质量验证（新增）
+└── utils/
+    ├── http_client.py         # HTTP客户端（支持多平台）
+    ├── text_similarity.py     # 文本相似度计算（Sentence-BERT）
+    ├── time_utils.py          # 时间处理工具
+    ├── config_loader.py       # 配置加载（新增）
+    └── fallback_handler.py    # 降级处理（新增）
 ```
 
-#### 2.1.2 核心算法实现
-1. **数据采集**：
-   - 定时任务：每天00:00执行
-   - 多平台并行采集：起点、晋江、番茄等
-   - 防反爬策略：随机延迟、User-Agent轮换
-   - 数据验证：完整性校验、去重清洗
-
-2. **题材库管理**：
-   - SQLite数据库存储：`genre_library.db`
-   - 相似度计算：Sentence-BERT向量化 + 余弦相似度
-   - 热度衰减：`热度 = 初始热度 × e^(-0.05×天数)`
-   - 淘汰机制：30天无热度更新移入历史库
-
-3. **趋势分析**：
-   - 综合热度计算：`0.4×阅读量 + 0.3×讨论量 + 0.2×收藏量 + 0.1×分享量`
-   - 移动平均线：7日、30日、90日趋势
-   - 增长潜力评估：日增长率、加速度、稳定性
-
-#### 2.1.3 输出格式
-```json
-{
-  "timestamp": "2026-03-26T00:00:00",
-  "hot_genres": [
-    {
-      "name": "都市现实",
-      "heat_index": 95.2,
-      "daily_growth": 12.5,
-      "reader_profile": {
-        "age_distribution": {"18-25": 35, "26-35": 45, "36+": 20},
-        "gender_ratio": {"male": 40, "female": 60},
-        "reading_habits": {"weekday": 65, "weekend": 35}
-      }
-    }
-  ],
-  "emerging_genres": [...],
-  "chapter_recommendation": {"min": 12, "recommended": 18, "max": 30},
-  "market_analysis": {...}
-}
-```
-
-### 2.2 StyleAgent（风格解析Agent）
-
-#### 2.2.1 模块结构
-```
-style_agent/
-├── __init__.py
-├── main.py
-├── text_analyzer.py     # 文本特征提取
-├── style_quantifier.py  # 风格量化
-├── pattern_matcher.py   # 模式匹配
-└── output_formatter.py
-```
-
-#### 2.2.2 核心算法
-1. **语言特征提取**：
-   - 句子长度分布：平均长度、标准差
-   - 词汇复杂度：独特词汇占比、专业术语密度
-   - 修辞手法：比喻、排比、夸张等频率统计
-
-2. **叙事节奏分析**：
-   - 场景切换频率：每千字场景数
-   - 情节推进速度：关键事件间隔
-   - 情感强度曲线：情感词密度变化
-
-3. **风格参数化**：
-   - 10维风格向量：[语言复杂度, 叙事节奏, 对话占比, ...]
-   - 相似度匹配：与预定义风格模板对比
-   - 异常检测：识别风格突变点
-
-#### 2.2.3 输出格式
-```json
-{
-  "style_parameters": {
-    "language_complexity": 7.2,
-    "narrative_pace": 6.8,
-    "dialogue_ratio": 0.35,
-    "description_detail": 8.1,
-    "emotional_intensity": 6.5,
-    "rhetorical_frequency": 0.12
-  },
-  "characteristics": {
-    "sentence_length": {"mean": 25.3, "std": 8.7},
-    "vocabulary_richness": 0.18,
-    "scene_switch_freq": 2.3
-  },
-  "recommendations": [...]
-}
-```
-
-### 2.3 PlannerAgent（策划Agent）- 3章周期审核机制
-
-#### 2.3.1 模块结构
-```
-planner_agent/
-├── __init__.py
-├── main.py
-├── genre_selector.py    # 题材选择器
-├── story_outliner.py    # 故事总纲生成
-├── chapter_planner.py   # 章节大纲生成
-├── review_controller.py # 审核控制器
-├── fix_generator.py     # 修订生成器
-└── state_manager.py     # 状态管理器
-```
-
-#### 2.3.2 3章周期审核流程
+#### 2.1.2 数据源管理模块
 ```python
-class ThreeChapterCycle:
-    def __init__(self):
-        self.batch_size = 3
-        self.current_batch = 1
-        self.fixed_settings = {}  # 固化设定
+class DataSourceManager:
+    """多平台数据源管理"""
     
-    def process(self, total_chapters):
-        # 第1-3章：生成并深度审核
-        chapters_1_3 = self.generate_chapters(1, 3)
-        review_result = self.deep_review(chapters_1_3)
-        
-        if review_result["pass"]:
-            # 固化设定
-            self.fixed_settings = self.extract_fixed_settings(chapters_1_3)
-            # 继续生成4-6章
-            chapters_4_6 = self.generate_chapters(4, 6, self.fixed_settings)
-            # 继续滚动生成...
-        else:
-            # 修订循环
-            return self.revision_cycle(chapters_1_3, review_result)
-```
-
-#### 2.3.3 题材选择算法
-```python
-def weighted_random_selection(genres, recent_creations):
-    """加权随机选择题材"""
-    probabilities = []
-    for genre in genres:
-        # 热度权重
-        heat_weight = normalize(genre.heat_index) * time_decay(genre.last_update)
-        
-        # 创新系数
-        if genre.rank <= 10:
-            innovation_coef = 0.7  # 热门题材
-        elif genre in top_5_growing:
-            innovation_coef = 1.5  # 新兴题材
-        else:
-            innovation_coef = 1.0  # 稳定题材
-        
-        # 回避系数
-        if genre.name in recent_creations[0:7]:  # 7天内创作过
-            avoidance_coef = 0.3
-        elif genre.name in recent_creations[8:30]:  # 8-30天前创作过
-            avoidance_coef = 0.7
-        else:
-            avoidance_coef = 1.2  # 长期未创作
-        
-        probability = heat_weight * innovation_coef * avoidance_coef
-        probabilities.append(probability)
-    
-    # 归一化并随机选择
-    total = sum(probabilities)
-    normalized = [p/total for p in probabilities]
-    return random.choices(genres, weights=normalized)[0]
-```
-
-#### 2.3.4 审核量化标准实现
-```python
-class ReviewMetrics:
-    def calculate_score(self, outline_batch):
-        """计算3章批次审核分数"""
-        scores = {
-            "structure_integrity": self.check_structure(outline_batch),
-            "character_consistency": self.check_characters(outline_batch),
-            "market_fit": self.check_market_fit(outline_batch),
-            "technical_feasibility": self.check_feasibility(outline_batch),
-            "style_compliance": self.check_style(outline_batch)
+    def __init__(self, config_path="config/data_sources.yaml"):
+        self.config = self._load_config(config_path)
+        self.sources = self._initialize_sources()
+        self.quality_metrics = {
+            "completeness": 0.0,
+            "timeliness": 0.0,
+            "accuracy": 0.0,
+            "consistency": 0.0
         }
-        
-        # 加权计算总分
-        weights = {"structure": 0.3, "character": 0.25, "market": 0.2, 
-                  "technical": 0.15, "style": 0.1}
-        total_score = sum(scores[k] * weights[k] for k in scores)
-        
+    
+    def _load_config(self, config_path):
+        """加载数据源配置"""
         return {
-            "total_score": total_score,
-            "dimension_scores": scores,
-            "pass": total_score >= 80 and all(s >= 60 for s in scores.values())
-        }
-```
-
-### 2.4 WriterAgent（写作Agent）- 3章批次生成机制
-
-#### 2.4.1 模块结构
-```
-writer_agent/
-├── __init__.py
-├── main.py
-├── batch_writer.py      # 批次写作器
-├── context_manager.py   # 上下文管理
-├── consistency_checker.py # 一致性检查
-├── quality_evaluator.py # 质量评估
-└── output_formatter.py
-```
-
-#### 2.4.2 3章批次生成流程
-```python
-class BatchWriter:
-    def __init__(self, batch_size=3):
-        self.batch_size = batch_size
-        self.context_window = []  # 保持最近3章上下文
-    
-    def write_batch(self, start_chapter, outlines):
-        """生成3章批次"""
-        chapters = []
-        
-        # 并行生成3章初稿
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = []
-            for i in range(self.batch_size):
-                chapter_num = start_chapter + i
-                future = executor.submit(self.write_chapter, chapter_num, outlines[i])
-                futures.append(future)
-            
-            # 收集结果
-            for future in futures:
-                chapters.append(future.result())
-        
-        # 批次内审核
-        batch_review = self.review_batch(chapters)
-        
-        if batch_review["pass"]:
-            # 固化内容，清理上下文
-            self.context_window = chapters[-self.batch_size:]
-            return chapters
-        else:
-            # 批次内修订
-            return self.revise_batch(chapters, batch_review)
-```
-
-#### 2.4.3 上下文管理
-```python
-class ContextManager:
-    def __init__(self):
-        self.recent_chapters = []  # 最近章节内容
-        self.character_states = {} # 人物状态快照
-        self.plot_progress = {}    # 情节进展
-    
-    def update_context(self, new_chapters):
-        """更新上下文窗口"""
-        # 保留最近3章
-        self.recent_chapters = (self.recent_chapters + new_chapters)[-3:]
-        
-        # 更新人物状态
-        for chapter in new_chapters:
-            self._extract_character_states(chapter)
-        
-        # 更新情节进展
-        self._update_plot_progress(new_chapters)
-    
-    def get_context_prompt(self):
-        """生成上下文提示"""
-        return {
-            "recent_chapters": self.recent_chapters,
-            "character_states": self.character_states,
-            "plot_progress": self.plot_progress,
-            "next_requirements": self._generate_next_requirements()
-        }
-```
-
-### 2.5 PolishAgent（润色Agent）
-
-#### 2.5.1 模块结构
-```
-polish_agent/
-├── __init__.py
-├── main.py
-├── grammar_checker.py   # 语法检查
-├── expression_optimizer.py # 表达优化
-├── style_enforcer.py    # 风格强化
-├── rhythm_adjuster.py   # 节奏调整
-└── change_tracker.py    # 修改追踪
-```
-
-#### 2.5.2 四层润色机制
-```python
-class FourLayerPolishing:
-    def polish(self, original_text):
-        # 第1层：语法检查
-        layer1 = self.grammar_check(original_text)
-        
-        # 第2层：表达优化
-        layer2 = self.expression_optimize(layer1)
-        
-        # 第3层：风格强化
-        layer3 = self.style_enforce(layer2)
-        
-        # 第4层：节奏调整
-        final = self.rhythm_adjust(layer3)
-        
-        # 记录修改
-        changes = self.track_changes(original_text, final)
-        
-        return {
-            "polished_text": final,
-            "change_report": changes,
-            "quality_improvement": self.calculate_improvement(original_text, final)
-        }
-```
-
-### 2.6 AuditorAgent（审计Agent）
-
-#### 2.6.1 模块结构
-```
-auditor_agent/
-├── __init__.py
-├── main.py
-├── plot_auditor.py      # 情节审计
-├── character_auditor.py # 人物审计
-├── logic_auditor.py     # 逻辑审计
-├── style_auditor.py     # 风格审计
-├── language_auditor.py  # 语言审计
-└── metrics_calculator.py # 指标计算
-```
-
-#### 2.6.2 量化指标计算实现
-```python
-class AuditMetricsCalculator:
-    def calculate_precision(self, identified_issues, actual_issues):
-        """计算准确率"""
-        true_positives = len(set(identified_issues) & set(actual_issues))
-        total_identified = len(identified_issues)
-        
-        if total_identified == 0:
-            return 1.0  # 没有识别问题，视为准确
-        
-        precision = true_positives / total_identified
-        return precision
-    
-    def calculate_recall(self, identified_issues, actual_issues):
-        """计算召回率"""
-        true_positives = len(set(identified_issues) & set(actual_issues))
-        total_actual = len(actual_issues)
-        
-        if total_actual == 0:
-            return 1.0  # 没有实际问题，视为全召回
-        
-        recall = true_positives / total_actual
-        return recall
-    
-    def calculate_f1(self, precision, recall):
-        """计算F1分数"""
-        if precision + recall == 0:
-            return 0.0
-        
-        f1 = 2 * (precision * recall) / (precision + recall)
-        return f1
-    
-    def calculate_confidence(self, issue):
-        """计算问题置信度"""
-        factors = {
-            "severity": issue.get("severity", 0.5),
-            "evidence_strength": issue.get("evidence", 0.5),
-            "consistency": issue.get("consistency", 0.5)
-        }
-        
-        confidence = sum(factors.values()) / len(factors)
-        
-        if confidence >= 0.9:
-            return "high"
-        elif confidence >= 0.7:
-            return "medium"
-        else:
-            return "low"
-```
-
-### 2.7 ReviserAgent（修订Agent）
-
-#### 2.7.1 模块结构
-```
-reviser_agent/
-├── __init__.py
-├── main.py
-├── issue_analyzer.py    # 问题分析
-├── strategy_selector.py # 策略选择
-├── revision_generator.py # 修订生成
-├── impact_assessor.py   # 影响评估
-└── quality_validator.py # 质量验证
-```
-
-#### 2.7.2 修订策略体系
-```python
-class RevisionStrategy:
-    def __init__(self):
-        self.strategies = {
-            "plot_hole": self.fix_plot_hole,
-            "character_inconsistency": self.fix_character,
-            "style_deviation": self.adjust_style,
-            "logic_error": self.correct_logic,
-            "language_issue": self.improve_language
+            "qidian": {
+                "type": "api",
+                "endpoint": "https://api.qidian.com/trend",
+                "rate_limit": "10 requests/minute",
+                "fallback": "local_cache",
+                "priority": 1  # 主要数据源
+            },
+            "jinjiang": {
+                "type": "crawler",
+                "base_url": "https://www.jjwxc.net",
+                "selectors": {
+                    "hot_list": ".hot-list li",
+                    "genre_tags": ".tag-item"
+                },
+                "anti_crawler": "rotating_proxy",
+                "priority": 2  # 备用数据源
+            },
+            # ... 其他数据源配置
         }
     
-    def revise(self, text, issues):
-        """执行修订"""
-        revisions = []
+    async def collect_data(self, use_cache=True):
+        """从多个数据源收集数据"""
+        collected_data = {}
+        source_quality = {}
         
-        for issue in issues:
-            issue_type = issue["type"]
-            strategy = self.strategies.get(issue_type, self.default_revision)
-            
-            # 应用修订策略
-            revised_text, changes = strategy(text, issue)
-            
-            revisions.append({
-                "issue": issue,
-                "revised_text": revised_text,
-                "changes": changes,
-                "strategy_used": issue_type
-            })
-        
-        # 合并所有修订
-        final_text = self.merge_revisions(text, revisions)
-        
-        return {
-            "final_text": final_text,
-            "revisions": revisions,
-            "metrics": self.calculate_revision_metrics(revisions)
-        }
-```
-
-## 3. 系统集成设计
-
-### 3.1 任务流水线控制器
-```python
-class PipelineController:
-    def __init__(self):
-        self.agents = {
-            "trend": TrendAgent(),
-            "style": StyleAgent(),
-            "planner": PlannerAgent(),
-            "writer": WriterAgent(),
-            "polish": PolishAgent(),
-            "auditor": AuditorAgent(),
-            "reviser": ReviserAgent()
-        }
-        self.state_manager = StateManager()
-    
-    def execute_pipeline(self, task_id, novel_title):
-        """执行完整流水线"""
-        try:
-            # 1. 趋势分析
-            trend_result = self.agents["trend"].execute(task_id)
-            self.state_manager.update(task_id, "trend", "completed", trend_result)
-            
-            # 2. 风格解析
-            style_result = self.agents["style"].execute(task_id)
-            self.state_manager.update(task_id, "style", "completed", style_result)
-            
-            # 3. 策划（3章周期审核）
-            planner_result = self.agents["planner"].execute(
-                task_id, trend_result, style_result
-            )
-            self.state_manager.update(task_id, "planner", "completed", planner_result)
-            
-            # 4. 写作（3章批次生成）
-            writer_result = self.agents["writer"].execute(
-                task_id, planner_result["outlines"]
-            )
-            self.state_manager.update(task_id, "writer", "completed", writer_result)
-            
-            # 5. 润色
-            polish_result = self.agents["polish"].execute(
-                task_id, writer_result["chapters"]
-            )
-            self.state_manager.update(task_id, "polish", "completed", polish_result)
-            
-            # 6. 审计
-            audit_result = self.agents["auditor"].execute(
-                task_id, polish_result["polished_chapters"]
-            )
-            self.state_manager.update(task_id, "auditor", "completed", audit_result)
-            
-            # 7. 修订（如果需要）
-            if audit_result["needs_revision"]:
-                revision_result = self.agents["reviser"].execute(
-                    task_id, audit_result["issues"]
-                )
-                self.state_manager.update(task_id, "reviser", "completed", revision_result)
-            
-            # 标记任务完成
-            self.state_manager.complete_task(task_id)
-            
-            return {"status": "success", "task_id": task_id}
-            
-        except Exception as e:
-            self.state_manager.fail_task(task_id, str(e))
-            return {"status": "failed", "error": str(e)}
-```
-
-### 3.2 状态管理系统
-```python
-class StateManager:
-    def __init__(self, data_dir="backend/data"):
-        self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(exist_ok=True)
-    
-    def create_task(self, task_id, novel_title):
-        """创建新任务目录结构"""
-        task_dir = self.data_dir / "tasks" / task_id
-        task_dir.mkdir(parents=True)
-        
-        # 创建子目录
-        (task_dir / "output").mkdir()
-        (task_dir / "progress").mkdir()
-        (task_dir / "logs").mkdir()
-        (task_dir / "memory").mkdir()
-        
-        # 初始化元数据
-        meta = {
-            "task_id": task_id,
-            "novel_title": novel_title,
-            "status": "created",
-            "created_at": datetime.now().isoformat(),
-            "agents": {}
-        }
-        
-        self._write_json(task_dir / "meta.json", meta)
-        return task_dir
-    
-    def update(self, task_id, agent_name, status, result=None):
-        """更新Agent状态"""
-        task_dir = self.data_dir / "tasks" / task_id
-        meta = self._read_json(task_dir / "meta.json")
-        
-        meta["agents"][agent_name] = {
-            "status": status,
-            "completed_at": datetime.now().isoformat() if status == "completed" else None,
-            "result_summary": self._summarize_result(result) if result else None
-        }
-        
-        # 计算整体进度
-        meta["overall_progress"] = self._calculate_progress(meta["agents"])
-        
-        self._write_json(task_dir / "meta.json", meta)
-        
-        # 保存详细结果
-        if result:
-            output_file = task_dir / "output" / f"{agent_name}_result.json"
-            self._write_json(output_file, result)
-```
-
-### 3.3 数据存储设计
-
-#### 3.3.1 目录结构
-```
-backend/data/
-├── tasks/
-│   ├── {task_id}/
-│   │   ├── meta.json                    # 任务元数据
-│   │   ├── output/                      # Agent输出文件
-│   │   │   ├── trend_analysis.json
-│   │   │   ├── style_parameters.json
-│   │   │   ├── planner/
-│   │   │   │   ├── 策划案.md
-│   │   │   │   ├── 故事总纲.md
-│   │   │   │   └── 章节大纲.md
-│   │   │   ├── writer/
-│   │   │   │   ├── ch_01_raw.md
-│   │   │   │   ├── ch_02_raw.md
-│   │   │   │   └── ...
-│   │   │   ├── polish/
-│   │   │   │   ├── ch_01_polished.md
-│   │   │   │   └── ...
-│   │   │   ├── audit_report.json
-│   │   │   └── revision_report.json
-│   │   ├── progress/                    # 进度文件
-│   │   │   ├── TrendAgent.json
-│   │   │   ├── PlannerAgent.json
-│   │   │   └── ...
-│   │   ├── logs/                        # 日志文件
-│   │   │   ├── TrendAgent.jsonl
-│   │   │   ├── PlannerAgent.jsonl
-│   │   │   └── ...
-│   │   └── memory/                      # 长期记忆
-│   │       ├── 7_truths_trend.md
-│   │       ├── 7_truths_style.md
-│   │       └── ...
-├── genre_library.db                     # 题材库数据库
-└── system/
-    ├── config.json                      # 系统配置
-    └── cache/                           # 缓存数据
-```
-
-#### 3.3.2 文件格式规范
-1. **JSON文件**：所有结构化数据使用JSON格式
-2. **Markdown文件**：文本内容使用Markdown格式
-3. **日志文件**：JSON Lines格式，每行一个日志记录
-4. **进度文件**：实时更新的JSON状态文件
-
-### 3.4 错误处理与恢复
-
-#### 3.4.1 错误分类
-```python
-class ErrorHandler:
-    ERROR_TYPES = {
-        "llm_timeout": {"retry": 3, "backoff": 2.0},
-        "network_error": {"retry": 5, "backoff": 1.5},
-        "parse_error": {"retry": 2, "backoff": 1.0},
-        "validation_error": {"retry": 1, "backoff": 1.0},
-        "resource_error": {"retry": 0, "backoff": 0.0}  # 需要人工干预
-    }
-    
-    def handle_error(self, error_type, context):
-        """处理错误并决定恢复策略"""
-        strategy = self.ERROR_TYPES.get(error_type, {"retry": 1, "backoff": 1.0})
-        
-        if strategy["retry"] > 0:
-            return {
-                "action": "retry",
-                "max_retries": strategy["retry"],
-                "backoff_factor": strategy["backoff"]
-            }
-        else:
-            return {
-                "action": "escalate",
-                "requires_human": True,
-                "error_context": context
-            }
-```
-
-#### 3.4.2 状态恢复机制
-```python
-class StateRecovery:
-    def recover_task(self, task_id):
-        """恢复中断的任务"""
-        task_dir = self.data_dir / "tasks" / task_id
-        meta = self._read_json(task_dir / "meta.json")
-        
-        # 找出最后一个完成的Agent
-        last_completed = None
-        for agent, info in meta["agents"].items():
-            if info["status"] == "completed":
-                last_completed = agent
-        
-        if last_completed:
-            # 从最后一个完成的Agent继续
-            next_agent = self._get_next_agent(last_completed)
-            return {
-                "recovery_point": last_completed,
-                "next_agent": next_agent,
-                "resume_data": self._load_agent_output(task_dir, last_completed)
-            }
-        else:
-            # 从头开始
-            return {"recovery_point": "start", "next_agent": "trend"}
-```
-
-## 4. 与现有项目的集成
-
-### 4.1 现有代码分析
-基于对现有项目的分析，需要以下调整：
-
-#### 4.1.1 需要增强的模块
-1. **TrendAgent**：
-   - 添加题材库数据库管理
-   - 实现每日自动更新机制
-   - 增加相似度计算和热度衰减
-
-2. **PlannerAgent**：
-   - 实现3章周期审核机制
-   - 添加加权随机题材选择算法
-   - 完善审核量化标准计算
-
-3. **WriterAgent**：
-   - 实现3章批次生成机制
-   - 添加批次内审核和一致性检查
-   - 改进上下文管理
-
-4. **AuditorAgent**：
-   - 添加量化指标计算（准确率、召回率、F1）
-   - 实现置信度评分系统
-   - 完善问题类型覆盖
-
-#### 4.1.2 需要新增的模块
-1. **GenreLibrary**：题材库管理模块
-2. **BatchController**：批次控制模块
-3. **MetricsCalculator**：指标计算模块
-4. **ContextManager**：上下文管理模块
-
-### 4.2 部署架构
-
-#### 4.2.1 服务器环境（裸机部署）
-```
-服务器：104.244.90.202:9000
-部署目录：/opt/ai-novel-agent/
-服务管理：systemd (ai-novel-agent.service)
-Python环境：/opt/ai-novel-agent/venv/
-数据库：SQLite (genre_library.db)
-```
-
-#### 4.2.2 服务配置
-```ini
-# systemd服务配置
-[Unit]
-Description=AI Novel Agent System
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/ai-novel-agent
-Environment="PATH=/opt/ai-novel-agent/venv/bin"
-ExecStart=/opt/ai-novel-agent/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9000
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-#### 4.2.3 目录权限
-```bash
-# 目录结构
-/opt/ai-novel-agent/
-├── backend/          # 源代码
-├── data/            # 数据目录（需要读写权限）
-├── venv/           # Python虚拟环境
-├── logs/           # 系统日志
-└── config/         # 配置文件
-
-# 权限设置
-chown -R root:root /opt/ai-novel-agent
-chmod 755 /opt/ai-novel-agent
-chmod -R 755 /opt/ai-novel-agent/backend
-chmod -R 777 /opt/ai-novel-agent/data  # 数据目录需要写权限
-```
-
-### 4.3 监控与维护
-
-#### 4.3.1 健康检查
-```python
-class HealthMonitor:
-    def check_system_health(self):
-        checks = {
-            "disk_space": self.check_disk_space(),
-            "memory_usage": self.check_memory(),
-            "llm_connectivity": self.check_llm(),
-            "database_health": self.check_database(),
-            "agent_status": self.check_agents()
-        }
-        
-        overall = all(check["healthy"] for check in checks.values())
-        
-        return {
-            "overall_health": overall,
-            "checks": checks,
-            "timestamp": datetime.now().isoformat()
-        }
-```
-
-#### 4.3.2 日志系统
-```python
-class LogSystem:
-    def __init__(self, log_dir="logs"):
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True)
-    
-    def log_agent(self, agent_name, level, message, data=None):
-        """记录Agent日志"""
-        log_file = self.log_dir / f"{agent_name}.jsonl"
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "agent": agent_name,
-            "level": level,
-            "message": message,
-            "data": data
-        }
-        
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-```
-
-## 5. 实施计划
-
-### 5.1 第一阶段：核心机制实现
-1. **题材库管理系统** (3天)
-   - 实现GenreLibrary模块
-   - 添加每日更新定时任务
-   - 实现相似度计算和热度衰减
-
-2. **3章周期审核机制** (5天)
-   - 修改PlannerAgent支持批次审核
-   - 实现固化设定机制
-   - 添加审核量化标准计算
-
-3. **3章批次生成机制** (4天)
-   - 修改WriterAgent支持批次生成
-   - 实现批次内审核
-   - 添加上下文管理
-
-### 5.2 第二阶段：量化指标系统
-1. **审计量化指标** (3天)
-   - 实现准确率、召回率计算
-   - 添加置信度评分
-   - 完善问题类型覆盖
-
-2. **性能监控系统** (2天)
-   - 添加健康检查
-   - 实现日志系统
-   - 添加错误统计
-
-### 5.3 第三阶段：系统集成与测试
-1. **系统集成测试** (3天)
-   - 端到端流水线测试
-   - 错误恢复测试
-   - 性能压力测试
-
-2. **部署与优化** (2天)
-   - 生产环境部署
-   - 性能调优
-   - 监控配置
-
-## 6. 总结
-
-本概要设计基于需求文档，结合现有项目实现，提出了完整的系统架构方案。重点包括：
-
-1. **7个Agent的详细设计**：每个Agent都有明确的模块结构和算法实现
-2. **3章周期审核机制**：核心创新点，确保质量的同时提高效率
-3. **量化指标系统**：使审核和修订过程可衡量、可优化
-4. **健壮性设计**：完善的错误处理和状态恢复机制
-5. **与现有项目集成**：基于现有代码，最小化改动，最大化价值
-
-所有设计都考虑了实际部署环境（裸机服务器），确保可实施性和可维护性。── main.py              # 主执行入口
-├── data_collector.py    # 数据采集模块
-├── genre_manager.py     # 题材库管理模块
-├── trend_analyzer.py    # 趋势分析模块
-├── cache_manager.py     # 缓存管理模块
-└── output_generator.py  # 输出生成模块
-```
-
-#### 2.1.2 核心算法实现
-**题材库动态管理**：
-```python
-class GenreManager:
-    def __init__(self):
-        self.genres_db = "backend/data/genre_library.db"
-        self.active_genres = {}  # 活跃题材库
-        self.history_genres = {} # 历史题材库
-    
-    def daily_update(self):
-        """每日00:00自动更新"""
-        # 1. 采集各平台数据
-        new_genres = self.collect_platform_data()
-        
-        # 2. 相似度过滤（<70%相似度纳入）
-        filtered = self.filter_by_similarity(new_genres, threshold=0.7)
-        
-        # 3. 热度衰减计算
-        self.apply_heat_decay()
-        
-        # 4. 30天淘汰机制
-        self.remove_inactive_genres(days=30)
-        
-        # 5. 持久化存储
-        self.save_to_db()
-    
-    def calculate_similarity(self, genre1, genre2):
-        """文本向量化相似度计算"""
-        # 使用BERT或TF-IDF计算相似度
-        pass
-    
-    def apply_heat_decay(self):
-        """指数衰减模型：热度 = 初始热度 × e^(-λ×天数)"""
-        for genre in self.active_genres.values():
-            days = (datetime.now() - genre.last_update).days
-            genre.heat = genre.initial_heat * math.exp(-0.05 * days)
-```
-
-**热度计算算法**：
-```python
-def calculate_comprehensive_heat(self, data):
-    """综合热度计算：0.4×阅读量 + 0.3×讨论量 + 0.2×收藏量 + 0.1×分享量"""
-    read_weight = 0.4
-    discuss_weight = 0.3
-    collect_weight = 0.2
-    share_weight = 0.1
-    
-    heat = (
-        data.read_count * read_weight +
-        data.discuss_count * discuss_weight +
-        data.collect_count * collect_weight +
-        data.share_count * share_weight
-    )
-    return heat
-```
-
-#### 2.1.3 输出格式
-```json
-{
-  "trend_analysis": {
-    "timestamp": "2026-03-26T00:00:00",
-    "hot_genres": [
-      {
-        "rank": 1,
-        "name": "都市现实",
-        "heat_index": 95.2,
-        "sub_genres": ["职场商战", "校园青春"],
-        "reader_profile": {
-          "age_distribution": {"18-25": 35, "26-35": 45},
-          "gender_ratio": {"male": 40, "female": 60},
-          "reading_time": {"weekday": 65, "weekend": 35}
-        }
-      }
-    ],
-    "emerging_genres": [
-      {
-        "name": "科幻未来",
-        "growth_rate": 25.3,
-        "daily_discussion": 1500
-      }
-    ],
-    "chapter_recommendation": {
-      "min": 12,
-      "recommended": 18,
-      "max": 30
-    },
-    "market_analysis": {
-      "saturation_level": 75.2,
-      "opportunity_points": ["跨界融合", "细分领域"]
-    }
-  }
-}
-```
-
-### 2.2 StyleAgent（风格解析Agent）
-
-#### 2.2.1 模块结构
-```
-style_agent/
-├── __init__.py
-├── main.py
-├── text_analyzer.py      # 文本分析模块
-├── style_extractor.py    # 风格特征提取模块
-├── parameter_generator.py # 参数生成模块
-└── template_matcher.py   # 模板匹配模块
-```
-
-#### 2.2.2 核心算法实现
-**风格参数量化**：
-```python
-class StyleAnalyzer:
-    def analyze_novel_style(self, novel_text):
-        """深度分析小说风格特征"""
-        # 1. 语言复杂度分析
-        complexity = self.calculate_language_complexity(novel_text)
-        
-        # 2. 叙事节奏分析
-        rhythm = self.analyze_narrative_rhythm(novel_text)
-        
-        # 3. 对话特征分析
-        dialogue_features = self.extract_dialogue_features(novel_text)
-        
-        # 4. 描写详细度分析
-        description_detail = self.analyze_description_detail(novel_text)
-        
-        # 5. 情感曲线分析
-        emotion_curve = self.extract_emotion_curve(novel_text)
-        
-        return {
-            "language_complexity": complexity,  # 1-10分
-            "narrative_rhythm": rhythm,         # 快/中/慢
-            "dialogue_ratio": dialogue_features["ratio"],  # 20-40%
-            "description_detail": description_detail,      # 详细程度
-            "emotion_intensity": emotion_curve["intensity"]  # 情感强度
-        }
-```
-
-### 2.3 PlannerAgent（策划Agent）- 3章周期审核机制
-
-#### 2.3.1 模块结构
-```
-planner_agent/
-├── __init__.py
-├── main.py
-├── genre_selector.py     # 题材选择模块
-├── story_outline.py      # 故事总纲生成模块
-├── chapter_planner.py    # 章节规划模块
-├── review_mechanism.py   # 3章周期审核机制
-├── setting_solidifier.py # 设定固化模块
-└── output_generator.py   # 输出生成模块
-```
-
-#### 2.3.2 核心算法实现
-**加权随机选择算法**：
-```python
-class GenreSelector:
-    def weighted_random_selection(self, genres_data):
-        """按比例随机选择题材"""
-        # 计算选择概率：热度权重 × 创新系数 × 回避系数
-        probabilities = []
-        for genre in genres_data:
-            heat_weight = self.normalize_heat(genre.heat)
-            innovation_coef = self.get_innovation_coefficient(genre.rank)
-            avoidance_coef = self.get_avoidance_coefficient(genre.last_used)
-            
-            probability = heat_weight * innovation_coef * avoidance_coef
-            probabilities.append(probability)
-        
-        # 归一化概率
-        total = sum(probabilities)
-        normalized = [p/total for p in probabilities]
-        
-        # 加权随机选择
-        selected = random.choices(genres_data, weights=normalized, k=1)[0]
-        return selected
-    
-    def get_innovation_coefficient(self, rank):
-        """创新系数计算"""
-        if rank <= 10:      # 热门题材
-            return 0.7
-        elif rank <= 30:    # 稳定题材
-            return 1.0
-        elif rank <= 35:    # 新兴题材（增长最快前5）
-            return 1.5
-        else:               # 冷门题材
-            return 0.5
-    
-    def get_avoidance_coefficient(self, days_since_last_use):
-        """回避系数计算"""
-        if days_since_last_use <= 7:    # 近期已创作
-            return 0.3
-        elif days_since_last_use <= 30: # 适度重复
-            return 0.7
-        elif days_since_last_use > 30:  # 长期未创作
-            return 1.2
-        else:                           # 全新题材
-            return 1.5
-```
-
-**3章周期审核机制**：
-```python
-class ThreeChapterReviewMechanism:
-    def __init__(self):
-        self.current_batch = 1
-        self.solidified_settings = {}
-        self.review_count = 0
-    
-    def process_chapter_batch(self, chapters_data):
-        """处理3章批次"""
-        # 1. 生成前3章大纲
-        if self.current_batch == 1:
-            outline = self.generate_first_three_chapters(chapters_data)
-            
-            # 2. 深度审核
-            review_result = self.deep_review(outline)
-            
-            # 3. 审核通过则固化设定
-            if review_result["pass"]:
-                self.solidify_settings(outline)
-                self.current_batch += 1
-                return True
-            else:
-                # 4. 修订重试
-                return self.revise_and_retry(outline, review_result)
-        
-        # 5. 后续批次基于固化设定生成
-        else:
-            outline = self.generate_next_batch(chapters_data, self.solidified_settings)
-            review_result = self.batch_review(outline)
-            
-            if review_result["pass"]:
-                self.current_batch += 1
-                return True
-            else:
-                return self.revise_and_retry(outline, review_result)
-    
-    def solidify_settings(self, outline):
-        """固化设定"""
-        self.solidified_settings = {
-            "core_characters": outline["characters"],
-            "world_rules": outline["world_rules"],
-            "main_conflict": outline["main_conflict"],
-            "emotional_tone": outline["emotional_tone"],
-            "chapter_length": outline["chapter_length"],
-            "dialogue_ratio": outline["dialogue_ratio"]
-        }
-```
-
-**审核量化标准实现**：
-```python
-class ReviewQuantification:
-    def calculate_review_score(self, outline):
-        """计算审核总分"""
-        scores = {
-            "structure": self.evaluate_structure(outline),      # 权重30%
-            "character": self.evaluate_character(outline),      # 权重25%
-            "market": self.evaluate_market_match(outline),      # 权重20%
-            "feasibility": self.evaluate_feasibility(outline),  # 权重15%
-            "style": self.evaluate_style_match(outline)         # 权重10%
-        }
-        
-        total_score = sum(
-            score * weight for score, weight in zip(
-                scores.values(), 
-                [0.3, 0.25, 0.2, 0.15, 0.1]
-            )
-        )
-        
-        # 检查单项阈值
-        min_scores = {
-            "structure": 70,
-            "character": 70,
-            "market": 60,
-            "feasibility": 60,
-            "style": 60
-        }
-        
-        all_pass = all(
-            scores[key] >= min_scores[key] 
-            for key in min_scores
-        )
-        
-        return {
-            "total_score": total_score,
-            "dimension_scores": scores,
-            "pass": total_score >= 80 and all_pass
-        }
-```
-
-### 2.4 WriterAgent（写作Agent）- 3章批次生成机制
-
-#### 2.4.1 模块结构
-```
-writer_agent/
-├── __init__.py
-├── main.py
-├── chapter_generator.py  # 章节生成模块
-├── batch_manager.py      # 批次管理模块
-├── internal_review.py    # 批次内审核模块
-├── consistency_checker.py # 一致性检查模块
-└── output_formatter.py   # 输出格式化模块
-```
-
-#### 2.4.2 核心算法实现
-**3章批次生成流程**：
-```python
-class ThreeChapterBatchWriter:
-    def __init__(self, total_chapters):
-        self.total_chapters = total_chapters
-        self.batch_size = 3
-        self.current_batch = 0
-        self.solidified_content = {}
-    
-    def generate_novel(self, outline):
-        """生成完整小说"""
-        chapters = []
-        
-        while self.current_batch * self.batch_size < self.total_chapters:
-            # 1. 批次准备
-            batch_start = self.current_batch * self.batch_size
-            batch_end = min(batch_start + self.batch_size, self.total_chapters)
-            
-            # 2. 3章并行生成
-            batch_chapters = self.generate_batch_parallel(
-                outline, batch_start, batch_end
-            )
-            
-            # 3. 批次内审核
-            review_result = self.internal_batch_review(batch_chapters)
-            
-            if review_result["pass"]:
-                # 4. 内容固化
-                self.solidify_batch_content(batch_chapters)
-                chapters.extend(batch_chapters)
-                self.current_batch += 1
-            else:
-                # 5. 问题修订
-                batch_chapters = self.revise_batch(
-                    batch_chapters, review_result["issues"]
-                )
-                # 重新审核
-                continue
-        
-        return chapters
-    
-    def internal_batch_review(self, batch_chapters):
-        """批次内审核"""
-        scores = {
-            "plot_coherence": self.evaluate_plot_coherence(batch_chapters),  # 权重40%
-            "character_consistency": self.evaluate_character_consistency(batch_chapters),  # 权重30%
-            "style_consistency": self.evaluate_style_consistency(batch_chapters),  # 权重20%
-            "language_quality": self.evaluate_language_quality(batch_chapters)     # 权重10%
-        }
-        
-        total_score = sum(
-            score * weight for score, weight in zip(
-                scores.values(),
-                [0.4, 0.3, 0.2, 0.1]
-            )
-        )
-        
-        # 检查单章最低分
-        chapter_scores = [self.evaluate_single_chapter(ch) for ch in batch_chapters]
-        min_chapter_score = min(chapter_scores)
-        
-        return {
-            "total_score": total_score,
-            "chapter_scores": chapter_scores,
-            "pass": total_score >= 75 and min_chapter_score >= 65
-        }
-```
-
-### 2.5 AuditorAgent（审计Agent）
-
-#### 2.5.1 模块结构
-```
-auditor_agent/
-├── __init__.py
-├── main.py
-├── plot_auditor.py       # 情节连贯性审计
-├── character_auditor.py  # 人物一致性审计
-├── logic_auditor.py      # 逻辑合理性审计
-├── style_auditor.py      # 风格符合度审计
-├── language_auditor.py   # 语言质量审计
-└── metrics_calculator.py # 量化指标计算
-```
-
-#### 2.5.2 核心算法实现
-**量化指标计算**：
-```python
-class AuditMetricsCalculator:
-    def calculate_precision(self, identified_issues, actual_issues):
-        """准确率计算：正确识别的问题数 / 总识别的问题数"""
-        true_positives = len(set(identified_issues) & set(actual_issues))
-        total_identified = len(identified_issues)
-        
-        if total_identified == 0:
-            return 0.0
-        
-        precision = true_positives / total_identified
-        return precision
-    
-    def calculate_recall(self, identified_issues, actual_issues):
-        """召回率计算：正确识别的问题数 / 实际存在的问题总数"""
-        true_positives = len(set(identified_issues) & set(actual_issues))
-        total_actual = len(actual_issues)
-        
-        if total_actual == 0:
-            return 1.0  # 如果没有问题，召回率为100%
-        
-        recall = true_positives / total_actual
-        return recall
-    
-    def calculate_f1_score(self, precision, recall):
-        """F1分数计算：2 × (准确率 × 召回率) / (准确率 + 召回率)"""
-        if precision + recall == 0:
-            return 0.0
-        
-        f1 = 2 * (precision * recall) / (precision + recall)
-        return f1
-    
-    def calculate_confidence_score(self, issue):
-        """置信度评分计算"""
-        # 基于问题明显程度、证据强度、历史准确率
-        evidence_strength = self.evaluate_evidence_strength(issue)
-        historical_accuracy = self.get_historical_accuracy(issue.type)
-        clarity_score = self.evaluate_issue_clarity(issue)
-        
-        confidence = (
-            evidence_strength * 0.4 +
-            historical_accuracy * 0.4 +
-            clarity_score * 0.2
-        )
-        
-        return confidence
-```
-
-### 2.6 ReviserAgent（修订Agent）
-
-#### 2.6.1 模块结构
-```
-reviser_agent/
-├── __init__.py
-├── main.py
-├── issue_analyzer.py     # 问题分析模块
-├── revision_strategy.py  # 修订策略模块
-├── minimal_revision.py   # 最小化修订模块
-├── quality_validator.py  # 质量验证模块
-└── progress_tracker.py   # 进度追踪模块
-```
-
-#### 2.6.2 核心算法实现
-**增量修订原则**：
-```python
-class MinimalRevisionStrategy:
-    def revise_content(self, original_content, audit_report):
-        """最小化修订"""
-        revisions = []
-        
-        for issue in audit_report["issues"]:
-            if issue["severity"] == "critical":
-                # 严重问题：必须解决
-                revision = self.apply_critical_fix(original_content, issue)
-                revisions.append(revision)
-            elif issue["severity"] == "major":
-                # 重要问题：尽量解决
-                if random.random() < 0.8:  # 80%解决率
-                    revision = self.apply_major_fix(original_content, issue)
-                    revisions.append(revision)
-            elif issue["severity"] == "minor":
-                # 轻微问题：选择性解决
-                if random.random() < 0.5:  # 50%解决率
-                    revision = self.apply_minor_fix(original_content, issue)
-                    revisions.append(revision)
-        
-        # 合并所有修订，确保最小化修改
-        revised_content = self.merge_revisions(original_content, revisions)
-        
-        # 验证修订质量提升
-        quality_improvement = self.calculate_quality_improvement(
-            original_content, revised_content
-        )
-        
-        return {
-            "revised_content": revised_content,
-            "revisions_applied": len(revisions),
-            "quality_improvement": quality_improvement,
-            "critical_issues_resolved": self.count_resolved_issues(
-                audit_report, "critical"
-            )
-        }
-    
-    def calculate_quality_improvement(self, original, revised):
-        """计算质量提升度"""
-        original_score = self.evaluate_content_quality(original)
-        revised_score = self.evaluate_content_quality(revised)
-        
-        improvement = revised_score - original_score
-        return max(0, improvement)  # 确保非负
-```
-
-### 2.7 PolishAgent（润色Agent）
-
-#### 2.7.1 模块结构
-```
-polish_agent/
-├── __init__.py
-├── main.py
-├── grammar_checker.py    # 语法检查模块
-├── expression_optimizer.py # 表达优化模块
-├── style_enhancer.py     # 风格强化模块
-├── rhythm_adjuster.py    # 节奏调整模块
-└── change_tracker.py     # 修改追踪模块
-```
-
-#### 2.7.2 核心算法实现
-**分层润色机制**：
-```python
-class LayeredPolishing:
-    def polish_content(self, content, style_parameters):
-        """分层润色"""
-        # 1. 语法检查层
-        content = self.grammar_check_layer(content)
-        
-        # 2. 表达优化层
-        content = self.expression_optimization_layer(content)
-        
-        # 3. 风格调整层
-        content = self.style_adjustment_layer(content, style_parameters)
-        
-        # 4. 节奏优化层
-        content = self.rhythm_optimization_layer(content)
-        
-        return content
-    
-    def grammar_check_layer(self, content):
-        """基础语法错误修正"""
-        # 使用语言模型或规则检查语法
-        corrected = self.correct_grammar_errors(content)
-        return corrected
-    
-    def style_adjustment_layer(self, content, style_params):
-        """强化风格特征一致性"""
-        adjusted = content
-        
-        # 调整语言复杂度
-        if style_params["language_complexity"] > 7:
-            adjusted = self.increase_complexity(adjusted)
-        elif style_params["language_complexity"] < 4:
-            adjusted = self.simplify_language(adjusted)
-        
-        # 调整对话占比
-        current_ratio = self.calculate_dialogue_ratio(adjusted)
-        target_ratio = style_params["dialogue_ratio"]
-        
-        if abs(current_ratio - target_ratio) > 0.05:  # 5%偏差
-            adjusted = self.adjust_dialogue_ratio(adjusted, target_ratio)
-        
-        return adjusted
-```
-
-## 3. 数据存储设计
-
-### 3.1 任务目录结构
-```
-backend/data/tasks/
-├── {task_id}/                    # 任务根目录
-│   ├── meta.json                # 任务元数据
-│   ├── config.json              # 任务配置
-│   ├── progress/                # 进度目录
-│   │   ├── TrendAgent.json      # TrendAgent进度
-│   │   ├── StyleAgent.json      # StyleAgent进度
-│   │   ├── PlannerAgent.json    # PlannerAgent进度
-│   │   ├── WriterAgent.json     # WriterAgent进度
-│   │   ├── PolishAgent.json     # PolishAgent进度
-│   │   ├── AuditorAgent.json    # AuditorAgent进度
-│   │   └── ReviserAgent.json    # ReviserAgent进度
-│   ├── output/                  # 输出目录
-│   │   ├── trend/               # TrendAgent输出
-│   │   │   ├── trend_analysis.json
-│   │   │   └── genre_library.db
-│   │   ├── style/               # StyleAgent输出
-│   │   │   └── style_parameters.json
-│   │   ├── planner/             # PlannerAgent输出
-│   │   │   ├── 策划案.md
-│   │   │   ├── 故事总纲.md
-│   │   │   └── 章节大纲.md
-│   │   ├── writer/              # WriterAgent输出
-│   │   │   ├── ch_01_raw.md
-│   │   │   ├── ch_02_raw.md
-│   │   │   └── ...
-│   │   ├── polish/              # PolishAgent输出
-│   │   │   ├── ch_01_polished.md
-│   │   │   ├── ch_02_polished.md
-│   │   │   └── polish_report.json
-│   │   ├── audit/               # AuditorAgent输出
-│   │   │   └── audit_report.json
-│   │   └── revise/              # ReviserAgent输出
-│   │       └── revision_report.json
-│   └── logs/                    # 日志目录
-│       ├── TrendAgent.jsonl
-│       ├── StyleAgent.jsonl
-│       ├── PlannerAgent.jsonl
-│       ├── WriterAgent.jsonl
-│       ├── PolishAgent.jsonl
-│       ├── AuditorAgent.jsonl
-│       └── ReviserAgent.jsonl
-```
-
-### 3.2 数据格式规范
-
-#### 3.2.1 任务元数据 (meta.json)
-```json
-{
-  "task_id": "6f14e72e",
-  "title": "修复验证测试-5章",
-  "status": "running",  // pending, running, completed, failed, stopped
-  "created_at": "2026-03-26T14:30:00",
-  "started_at": "2026-03-26T14:31:00",
-  "completed_at": null,
-  "total_chapters": 5,
-  "current_chapter": 3,
-  "current_agent": "WriterAgent",
-  "progress_percentage": 60,
-  "error_message": null,
-  "config": {
-    "test_mode": true,
-    "max_retries": 12,
-    "llm_provider": "deepseek",
-    "mock_llm": false
-  }
-}
-```
-
-#### 3.2.2 Agent进度文件格式
-```json
-{
-  "agent": "PlannerAgent",
-  "status": "completed",  // pending, running, completed, failed
-  "start_time": "2026-03-26T14:31:00",
-  "end_time": "2026-03-26T14:38:00",
-  "duration_seconds": 420,
-  "output_files": [
-    "策划案.md",
-    "故事总纲.md",
-    "章节大纲.md"
-  ],
-  "metrics": {
-    "review_cycles": 2,
-    "total_revisions": 3,
-    "final_score": 85,
-    "dimension_scores": {
-      "structure": 88,
-      "character": 92,
-      "market": 78,
-      "feasibility": 82,
-      "style": 85
-    }
-  },
-  "errors": []
-}
-```
-
-## 4. 系统集成设计
-
-### 4.1 Agent间通信机制
-
-#### 4.1.1 数据传递方式
-```python
-class AgentPipeline:
-    def __init__(self, task_id):
-        self.task_id = task_id
-        self.task_dir = f"backend/data/tasks/{task_id}"
-        self.current_agent_index = 0
-        self.agents = [
-            TrendAgent(),
-            StyleAgent(),
-            PlannerAgent(),
-            WriterAgent(),
-            PolishAgent(),
-            AuditorAgent(),
-            ReviserAgent()
-        ]
-    
-    def execute(self):
-        """顺序执行所有Agent"""
-        for agent in self.agents:
-            # 1. 检查前置Agent输出
-            if not self.check_prerequisites(agent):
-                raise Exception(f"前置条件不满足: {agent.name}")
-            
-            # 2. 执行当前Agent
-            result = agent.execute(self.task_dir)
-            
-            # 3. 保存结果
-            self.save_agent_result(agent, result)
-            
-            # 4. 更新进度
-            self.update_progress(agent)
-            
-            # 5. 检查停止请求
-            if self.check_stop_request():
-                break
-    
-    def check_prerequisites(self, agent):
-        """检查前置Agent是否完成"""
-        agent_dependencies = {
-            "StyleAgent": ["TrendAgent"],
-            "PlannerAgent": ["TrendAgent", "StyleAgent"],
-            "WriterAgent": ["PlannerAgent"],
-            "PolishAgent": ["WriterAgent"],
-            "AuditorAgent": ["PolishAgent"],
-            "ReviserAgent": ["AuditorAgent"]
-        }
-        
-        deps = agent_dependencies.get(agent.name, [])
-        for dep in deps:
-            dep_progress = self.load_progress(dep)
-            if dep_progress["status"] != "completed":
-                return False
-        
-        return True
-```
-
-### 4.2 状态管理设计
-
-#### 4.2.1 中央状态管理器
-```python
-class StateManager:
-    def __init__(self):
-        self.current_task_id = None
-        self.task_states = {}  # 内存中的任务状态
-        self.agent_states = {} # Agent执行状态
-    
-    def set_current_task(self, task_id):
-        """设置当前任务"""
-        self.current_task_id = task_id
-        self.save_to_file("current_task.txt", task_id)
-    
-    def update_task_progress(self, task_id, progress_data):
-        """更新任务进度"""
-        if task_id not in self.task_states:
-            self.task_states[task_id] = {}
-        
-        self.task_states[task_id].update(progress_data)
-        
-        # 持久化到文件
-        self.save_task_state(task_id)
-    
-    def save_task_state(self, task_id):
-        """保存任务状态到文件"""
-        state_file = f"backend/data/tasks/{task_id}/meta.json"
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(self.task_states[task_id], f, ensure_ascii=False, indent=2)
-```
-
-### 4.3 错误处理与恢复
-
-#### 4.3.1 错误分类与处理策略
-```python
-class ErrorHandler:
-    ERROR_CATEGORIES = {
-        "llm_failure": {
-            "retry_strategy": "exponential_backoff",
-            "max_retries": 3,
-            "fallback": "use_mock_data"
-        },
-        "network_error": {
-            "retry_strategy": "linear_backoff",
-            "max_retries": 5,
-            "fallback": "use_cached_data"
-        },
-        "data_validation_error": {
-            "retry_strategy": "immediate",
-            "max_retries": 2,
-            "fallback": "skip_and_continue"
-        },
-        "resource_exhaustion": {
-            "retry_strategy": "wait_and_retry",
-            "max_retries": 1,
-            "fallback": "pause_and_resume"
-        }
-    }
-    
-    def handle_error(self, error_type, context):
-        """处理错误"""
-        strategy = self.ERROR_CATEGORIES.get(error_type)
-        if not strategy:
-            return self.handle_unknown_error(context)
-        
-        for attempt in range(strategy["max_retries"]):
+        for source_name, source_config in self.config.items():
             try:
-                # 尝试恢复
-                if self.try_recovery(strategy, context):
-                    return True
+                # 根据类型选择采集器
+                if source_config["type"] == "api":
+                    data = await self._collect_from_api(source_name, source_config)
+                elif source_config["type"] == "crawler":
+                    data = await self._collect_from_crawler(source_name, source_config)
+                elif source_config["type"] == "third_party":
+                    data = await self._collect_from_third_party(source_name, source_config)
+                
+                # 验证数据质量
+                quality = self._validate_data_quality(data, source_name)
+                source_quality[source_name] = quality
+                
+                # 合并数据（根据优先级和质量）
+                collected_data = self._merge_data(collected_data, data, quality)
+                
             except Exception as e:
-                # 等待后重试
-                wait_time = self.calculate_wait_time(strategy, attempt)
-                time.sleep(wait_time)
+                logger.error(f"数据源{source_name}采集失败: {e}")
+                # 使用降级数据
+                fallback_data = self._get_fallback_data(source_name)
+                collected_data = self._merge_data(collected_data, fallback_data, 0.5)
         
-        # 所有重试失败，执行降级策略
-        return self.execute_fallback(strategy["fallback"], context)
+        # 计算整体数据质量
+        self._calculate_overall_quality(source_quality)
+        
+        return collected_data
 ```
 
-## 5. 部署架构设计
-
-### 5.1 服务器环境配置
-```
-服务器: 104.244.90.202:9000
-部署目录: /opt/ai-novel-agent/
-运行用户: root 或专用用户
-Python环境: Python 3.9+ 虚拟环境
-服务管理: systemd (ai-novel-agent.service)
-```
-
-### 5.2 服务启动配置
-```ini
-# /etc/systemd/system/ai-novel-agent.service
-[Unit]
-Description=AI Novel Agent Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/ai-novel-agent
-Environment="PATH=/opt/ai-novel-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
-ExecStart=/opt/ai-novel-agent/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9000
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 5.3 目录权限设置
-```bash
-# 创建目录结构
-mkdir -p /opt/ai-novel-agent/{backend,data/tasks,logs,static}
-
-# 设置权限
-chown -R root:root /opt/ai-novel-agent
-chmod -R 755 /opt/ai-novel-agent
-
-# 数据目录可写
-chmod -R 777 /opt/ai-novel-agent/data
-```
-
-## 6. 监控与日志
-
-### 6.1 日志系统设计
+#### 2.1.3 相似度计算增强
 ```python
-class AgentLogger:
-    def __init__(self, task_id, agent_name):
-        self.log_file = f"backend/data/tasks/{task_id}/logs/{agent_name}.jsonl"
+class SimilarityCalculator:
+    """文本相似度计算（基于预训练模型）"""
     
-    def log(self, level, message, data=None):
-        """记录结构化日志"""
-        log_entry = {
+    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+        self.model = SentenceTransformer(model_name)
+        self.similarity_cache = LRUCache(maxsize=1000)
+    
+    def calculate_similarity(self, text1, text2, use_cache=True):
+        """计算两个文本的相似度"""
+        cache_key = f"{hash(text1)}:{hash(text2)}"
+        
+        if use_cache and cache_key in self.similarity_cache:
+            return self.similarity_cache[cache_key]
+        
+        # 文本预处理
+        processed1 = self._preprocess_text(text1)
+        processed2 = self._preprocess_text(text2)
+        
+        # 生成向量
+        embedding1 = self.model.encode(processed1)
+        embedding2 = self.model.encode(processed2)
+        
+        # 计算余弦相似度
+        similarity = cosine_similarity([embedding1], [embedding2])[0][0]
+        
+        # 缓存结果
+        if use_cache:
+            self.similarity_cache[cache_key] = similarity
+        
+        return similarity
+    
+    def find_similar_genres(self, target_genre, genre_list, threshold=0.7):
+        """在题材列表中查找相似题材"""
+        similar_genres = []
+        
+        for genre in genre_list:
+            similarity = self.calculate_similarity(target_genre, genre["name"])
+            
+            if similarity >= threshold:
+                similar_genres.append({
+                    "genre": genre,
+                    "similarity": similarity,
+                    "is_new": similarity < 0.7  # 相似度<0.7视为新题材
+                })
+        
+        # 按相似度排序
+        similar_genres.sort(key=lambda x: x["similarity"], reverse=True)
+        
+        return similar_genres
+```
+
+### 2.2 PlannerAgent（策划Agent） - 增强版
+
+#### 2.2.1 模块结构更新
+```
+planner_agent/
+├── __init__.py
+├── main.py                    # 主执行逻辑
+├── genre_selector.py          # 题材选择器（增强）
+├── story_planner.py           # 故事策划器
+├── chapter_outliner.py        # 章节大纲生成
+├── review_controller.py       # 审核控制器（增强）
+├── three_chapter_cycle.py     # 3章周期控制器
+├── fixed_settings_extractor.py # 固化设定提取
+├── differentiated_reviewer.py  # 差异化审核器（新增）
+├── genre_type_detector.py     # 题材类型检测器（新增）
+└── utils/
+    ├── weighted_random.py     # 加权随机选择
+    ├── innovation_calculator.py # 创新系数计算
+    ├── avoidance_calculator.py  # 回避系数计算
+    └── quality_scorer.py      # 质量评分器
+```
+
+#### 2.2.2 差异化审核器设计
+```python
+class DifferentiatedReviewer:
+    """差异化审核器 - 根据题材类型应用不同标准"""
+    
+    def __init__(self, standards_config="config/review_standards.yaml"):
+        self.standards = self._load_standards(standards_config)
+        self.genre_detector = GenreTypeDetector()
+        self.review_history = []  # 审核历史记录
+    
+    def _load_standards(self, config_path):
+        """加载差异化审核标准"""
+        return {
+            "high_quality_genre": {
+                "description": "高质量成熟题材（如都市现实、玄幻奇幻）",
+                "total_score": 85,
+                "dimension_requirements": {
+                    "structure": 75,
+                    "character": 80,
+                    "plot": 70,
+                    "market": 65,
+                    "style": 75
+                },
+                "special_rules": [
+                    "不允许出现明显逻辑漏洞",
+                    "人物性格必须稳定一致",
+                    "必须符合主流审美"
+                ],
+                "weight_adjustments": {
+                    "structure": 1.2,  # 结构权重增加20%
+                    "character": 1.3   # 人物权重增加30%
+                }
+            },
+            "experimental_genre": {
+                "description": "实验性创新题材（如跨界融合、新兴题材）",
+                "total_score": 70,
+                "dimension_requirements": {
+                    "structure": 65,
+                    "character": 70,
+                    "plot": 60,
+                    "market": 55,
+                    "innovation": 65  # 新增创新性维度
+                },
+                "special_rules": [
+                    "允许适度创新和冒险",
+                    "可以尝试非传统结构",
+                    "接受一定程度的读者接受度风险"
+                ],
+                "weight_adjustments": {
+                    "innovation": 1.5,  # 创新性权重增加50%
+                    "market": 0.8       # 市场匹配权重降低20%
+                }
+            },
+            # ... 其他题材类型标准
+        }
+    
+    def review_plan(self, plan_data, genre_info):
+        """审核策划案"""
+        # 检测题材类型
+        genre_type = self.genre_detector.detect(genre_info)
+        
+        # 获取对应标准
+        standard = self.standards.get(genre_type, self.standards["default"])
+        
+        # 计算各维度分数
+        dimension_scores = self._calculate_dimension_scores(plan_data, standard)
+        
+        # 应用权重调整
+        weighted_scores = self._apply_weight_adjustments(dimension_scores, standard)
+        
+        # 计算总分
+        total_score = self._calculate_total_score(weighted_scores)
+        
+        # 检查特殊规则
+        rule_violations = self._check_special_rules(plan_data, standard)
+        
+        # 判断是否通过
+        passed = self._determine_pass_status(total_score, dimension_scores, standard, rule_violations)
+        
+        # 记录审核历史
+        self._record_review_history({
+            "genre_type": genre_type,
+            "total_score": total_score,
+            "dimension_scores": dimension_scores,
+            "passed": passed,
+            "rule_violations": rule_violations,
+            "timestamp": datetime.now()
+        })
+        
+        return {
+            "passed": passed,
+            "genre_type": genre_type,
+            "total_score": total_score,
+            "dimension_scores": dimension_scores,
+            "feedback": self._generate_feedback(passed, dimension_scores, rule_violations),
+            "suggestions": self._generate_suggestions(dimension_scores, rule_violations)
+        }
+```
+
+#### 2.2.3 题材类型检测器
+```python
+class GenreTypeDetector:
+    """题材类型检测器"""
+    
+    def detect(self, genre_info):
+        """检测题材类型"""
+        detection_rules = {
+            "high_quality_genre": [
+                genre_info.get("heat_index", 0) > 90,
+                genre_info.get("reader_maturity", 0) > 0.7,
+                genre_info.get("market_stability", 0) > 0.8
+            ],
+            "experimental_genre": [
+                genre_info.get("growth_rate", 0) > 0.2,
+                genre_info.get("market_share", 0) < 0.1,
+                genre_info.get("innovation_score", 0) > 0.6
+            ],
+            "commercial_genre": [
+                genre_info.get("production_rate", 0) > 0.5,
+                genre_info.get("reader_retention", 0) > 0.6,
+                genre_info.get("monetization", 0) > 0.7
+            ],
+            "literary_genre": [
+                genre_info.get("critical_acclaim", 0) > 0.6,
+                genre_info.get("award_count", 0) > 0,
+                genre_info.get("depth_score", 0) > 0.7
+            ]
+        }
+        
+        # 计算每个类型的匹配分数
+        type_scores = {}
+        for genre_type, rules in detection_rules.items():
+            match_count = sum(1 for rule in rules if rule)
+            type_scores[genre_type] = match_count / len(rules)  # 匹配比例
+        
+        # 选择匹配度最高的类型
+        best_type = max(type_scores.items(), key=lambda x: x[1])
+        
+        # 如果匹配度低于阈值，使用默认类型
+        if best_type[1] < 0.5:
+            return "default"
+        
+        return best_type[0]
+```
+
+### 2.3 新增Agent设计
+
+#### 2.3.1 MonitorAgent（监控Agent）
+```
+monitor_agent/
+├── __init__.py
+├── main.py                    # 主监控循环
+├── metrics_collector.py       # 指标收集器
+├── performance_monitor.py     # 性能监控
+├── quality_monitor.py         # 质量监控
+├── business_monitor.py        # 业务监控
+├── data_aggregator.py         # 数据聚合器
+├── timeseries_storage.py      # 时序数据存储
+├── dashboard_updater.py       # 仪表盘更新
+└── report_generator.py        # 报告生成器
+```
+
+**核心功能**：
+1. **实时指标收集**：每5秒收集CPU、内存、GPU使用率
+2. **批次性能监控**：记录每个批次的生成时间、质量分数
+3. **质量趋势分析**：分析审核准确率、生成质量的变化趋势
+4. **业务指标统计**：统计任务完成率、并发数、错误率
+5. **数据持久化**：存储到时序数据库，支持历史查询
+6. **实时仪表盘**：更新Web前端监控界面
+7. **定期报告**：生成日报、周报、月报
+
+#### 2.3.2 AlertAgent（告警Agent）
+```
+alert_agent/
+├── __init__.py
+├── main.py                    # 主告警循环
+├── rule_engine.py             # 告警规则引擎
+├── alert_evaluator.py         # 告警评估器
+├── notification_dispatcher.py # 通知分发器
+├── auto_recovery_manager.py   # 自动恢复管理器
+├── escalation_handler.py      # 升级处理器
+├── alert_history_manager.py   # 告警历史管理
+└── integration_manager.py     # 集成管理
+```
+
+**三级告警体系**：
+1. **严重告警**（红色）：
+   - 条件：批次时间>10分钟，内存>700MB，错误率>10%
+   - 动作：立即通知值班人员，自动重启服务
+   - 恢复：自动减少批次大小，清理缓存
+
+2. **警告告警**（黄色）：
+   - 条件：批次时间>8分钟，内存>600MB，审核准确率<85%
+   - 动作：通知运维团队，记录警告日志
+   - 恢复：优化模型加载，增加GC频率
+
+3. **信息告警**（蓝色）：
+   - 条件：任务完成率<95%，生成质量<75分
+   - 动作：记录信息日志，更新仪表盘
+   - 通知：邮件通知相关团队
+
+### 2.4 硬件和部署架构
+
+#### 2.4.1 硬件配置架构
+```
+硬件配置体系：
+├── 开发环境配置（$1,500）
+│   ├── CPU: Intel i7-12700K
+│   ├── GPU: NVIDIA RTX 4070 (12GB)
+│   ├── RAM: 32GB DDR4
+│   └── 存储: 512GB NVMe SSD
+│
+├── 生产环境配置（$3,500）
+│   ├── CPU: Intel i9-13900K
+│   ├── GPU: NVIDIA RTX 4090 (24GB)
+│   ├── RAM: 64GB DDR5
+│   └── 存储: 1TB NVMe SSD + 2TB HDD
+│
+└── 云服务等价配置
+    ├── AWS: g5.2xlarge ($2.50/小时)
+    ├── Azure: NC6s_v3 ($3.05/小时)
+    └── Google Cloud: a2-highgpu-1g ($3.67/小时)
+```
+
+#### 2.4.2 部署架构
+```
+部署架构：
+├── 容器化部署（Docker）
+│   ├── 基础镜像：ubuntu:22.04 + python:3.11
+│   ├── Agent容器：每个Agent独立容器
+│   ├── 服务容器：API网关、监控服务、数据库
+│   └── 编排配置：docker-compose.yaml
+│
+├── 编排部署（Kubernetes）
+│   ├── 命名空间：ai-novel-agent
+│   ├── 部署配置：Deployment + Service
+│   ├── 配置管理：ConfigMap + Secret
+│   ├── 存储管理：PVC + StorageClass
+│   ├── 网络策略：NetworkPolicy
+│   └── 自动扩缩：HPA（基于CPU/内存）
+│
+└── 监控部署
+    ├── 指标收集：Prometheus + Node Exporter
+    ├── 可视化：Grafana仪表盘
+    ├── 日志收集：ELK Stack
+    ├── 告警管理：AlertManager
+    └── 追踪系统：Jaeger（可选）
+```
+
+### 2.5 数据流架构
+
+#### 2.5.1 主数据流
+```
+任务创建 → TrendAgent → StyleAgent → PlannerAgent → WriterAgent → PolishAgent → AuditorAgent → ReviserAgent
+      ↓          ↓           ↓           ↓           ↓           ↓           ↓           ↓
+  任务状态   趋势数据    风格参数    策划方案    章节内容    润色内容    审计报告    修订内容
+      ↓          ↓           ↓           ↓           ↓           ↓           ↓           ↓
+  状态管理   数据存储    参数存储    方案存储    内容存储    润色存储    报告存储    修订存储
+      ↓          ↓           ↓           ↓           ↓           ↓           ↓           ↓
+  进度追踪   质量分析    一致性检查  批次审核    质量评估    改进分析    问题统计    效果评估
+      ↓          ↓           ↓           ↓           ↓           ↓           ↓           ↓
+  用户界面   监控系统    监控系统    监控系统    监控系统    监控系统    监控系统    监控系统
+```
+
+#### 2.5.2 监控数据流
+```
+各Agent执行 → 性能指标 → MonitorAgent收集 → 时序数据库存储 → Grafana展示
+      ↓           ↓              ↓                ↓              ↓
+   质量指标   业务指标       数据聚合         历史查询       实时告警
+      ↓           ↓              ↓                ↓              ↓
+  AlertAgent评估 → 告警规则匹配 → 通知分发 → 自动恢复 → 告警历史
+```
+
+### 2.6 接口设计
+
+#### 2.6.1 Agent间通信接口
+```python
+# 标准Agent输出格式
+class AgentOutput:
+    def __init__(self, agent_name, task_id, data, metadata=None):
+        self.agent_name = agent_name
+        self.task_id = task_id
+        self.data = data  # 核心数据
+        self.metadata = metadata or {
             "timestamp": datetime.now().isoformat(),
-            "level": level,  # DEBUG, INFO, WARNING, ERROR
+            "execution_time": 0.0,
+            "quality_score": 0.0,
+            "confidence": 1.0,
+            "version": "1.0"
+        }
+    
+    def to_dict(self):
+        return {
             "agent": self.agent_name,
             "task_id": self.task_id,
-            "message": message,
-            "data": data
+            "data": self.data,
+            "metadata": self.metadata
         }
-        
-        with open(self.log_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+    
+    def save(self, output_dir):
+        # 保存到文件系统
+        file_path = os.path.join(output_dir, f"{self.agent_name}.json")
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+        return file_path
 ```
 
-### 6.2 健康检查端点
+#### 2.6.2 监控数据接口
 ```python
-@app.get("/api/health")
-async def health_check():
-    """系统健康检查"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "components": {
-            "llm_api": check_llm_connection(),
-            "database": check_database_connection(),
-            "file_system": check_disk_space(),
-            "memory_usage": get_memory_usage()
-        }
-    }
+# 监控指标数据结构
+class MetricData:
+    def __init__(self, metric_type, value, tags=None, timestamp=None):
+        self.metric_type = metric_type  # performance/quality/business
+        self.value = value
+        self.tags = tags or {}
+        self.timestamp = timestamp or datetime.now()
+    
+    def to_prometheus_format(self):
+        # 转换为Prometheus格式
+        tags_str = ",".join([f'{k}="{v}"' for k, v in self.tags.items()])
+        metric_name = f"ai_novel_agent_{self.metric_type}"
+        return f'{metric_name}{{{tags_str}}} {self.value} {int(self.timestamp.timestamp()*1000)}'
 ```
 
-## 7. 安全设计
+### 2.7 配置管理架构
 
-### 7.1 API安全
-- **CORS配置**：允许前端跨域访问
-- **请求限流**：防止API滥用
-- **输入验证**：所有API参数验证
-- **错误信息脱敏**：不泄露内部细节
+#### 2.7.1 多级配置体系
+```
+配置体系：
+├── 基础配置（config/base.yaml）
+│   ├── 系统配置：日志级别、工作目录、临时目录
+│   ├── 网络配置：超时时间、重试次数、代理设置
+│   └── 存储配置：数据库连接、文件路径、备份策略
+│
+├── Agent配置（config/agents/）
+│   ├── trend_agent.yaml：数据源配置、采集频率
+│   ├── planner_agent.yaml：审核标准、批次大小
+│   ├── writer_agent.yaml：生成参数、并发设置
+│   └── monitor_agent.yaml：监控间隔、告警阈值
+│
+├── 差异化配置（config/differentiated/）
+│   ├── review_standards.yaml：四种审核标准
+│   ├── genre_types.yaml：题材类型定义
+│   └── performance_profiles.yaml：性能场景配置
+│
+├── 监控配置（config/monitoring/）
+│   ├── alert_rules.yaml：三级告警规则
+│   ├── dashboard_config.yaml：仪表盘配置
+│   └── notification_channels.yaml：通知渠道
+│
+└── 环境配置（config/environments/）
+    ├── development.yaml：开发环境配置
+    ├── staging.yaml：测试环境配置
+    └── production.yaml：生产环境配置
+```
 
-### 7.2 数据安全
-- **任务隔离**：不同任务数据完全隔离
-- **文件权限**：严格的文件访问控制
-- **敏感信息**：API密钥等加密存储
-- **日志脱敏**：不记录敏感数据
+#### 2.7.2 配置热加载机制
+```python
+class ConfigManager:
+    """配置管理器（支持热加载）"""
+    
+    def __init__(self, config_dir="config"):
+        self.config_dir = config_dir
+        self.configs = {}
+        self.watchers = {}
+        self.last_modified = {}
+        
+        # 加载所有配置
+        self._load_all_configs()
+        
+        # 启动配置监听
+        self._start_config_watcher()
+    
+    def _load_all_configs(self):
+        """加载所有配置文件"""
+        config_files = self._find_config_files()
+        
+        for file_path in config_files:
+            config_name = os.path.splitext(os.path.basename(file_path))[0]
+            self.configs[config_name] = self._load_config_file(file_path)
+            self.last_modified[file_path] = os.path.getmtime(file_path)
+    
+    def get_config(self, config_name, default=None):
+        """获取配置"""
+        return self.configs.get(config_name, default)
+    
+    def update_config(self, config_name, new_config):
+        """更新配置（支持热更新）"""
+        old_config = self.configs.get(config_name)
+        self.configs[config_name] = new_config
+        
+        # 通知配置变更
+        self._notify_config_change(config_name, old_config, new_config)
+        
+        # 保存到文件
+        self._save_config_to_file(config_name, new_config)
+    
+    def _start_config_watcher(self):
+        """启动配置文件监听"""
+        import threading
+        
+        def watch_config_files():
+            while True:
+                time.sleep(5)  # 每5秒检查一次
+                self._check_config_changes()
+        
+        watcher_thread = threading.Thread(target=watch_config_files, daemon=True)
+        watcher_thread.start()
+```
+
+## 3. 性能优化设计
+
+### 3.1 批次生成优化
+- **动态批次大小**：根据系统负载自动调整（3章→2章）
+- **并行生成优化**：智能任务调度，避免资源竞争
+- **缓存策略优化**：多级缓存（内存→磁盘→数据库）
+- **模型预热**：预加载常用模型，减少冷启动时间
+
+### 3.2 内存管理优化
+- **内存池技术**：重用内存块，减少分配开销
+- **及时释放**：批次完成后立即释放临时数据
+- **内存压缩**：对历史数据使用压缩存储
+- **泄漏检测**：定期内存泄漏扫描和修复
+
+### 3.3 并发处理优化
+- **连接池管理**：数据库连接、HTTP连接池
+- **线程池优化**：根据CPU核心数动态调整
+- **异步IO**：全面使用async/await避免阻塞
+- **负载均衡**：多实例负载均衡和故障转移
+
+## 4. 容错和恢复设计
+
+### 4.1 错误分类和处理
+```python
+ERROR_HANDLING_STRATEGIES = {
+    "network_error": {
+        "retry_times": 3,
+        "backoff_factor": 2.0,
+        "fallback": "use_cached_data",
+        "escalation": "notify_network_team"
+    },
+    "resource_error": {
+        "retry_times": 2,
+        "backoff_factor": 1.5,
+        "fallback": "reduce_batch_size",
+        "escalation": "scale_resources"
+    },
+    "logic_error": {
+        "retry_times": 1,
+        "backoff_factor": 1.0,
+        "fallback": "use_simplified_logic",
+        "escalation": "notify_development_team"
+    },
+    "data_error": {
+        "retry_times": 2,
+        "backoff_factor": 1.2,
+        "fallback": "use_default_data",
+        "escalation": "notify_data_team"
+    }
+}
+```
+
+### 4.2 自动恢复机制
+1. **性能恢复**：检测到性能下降时自动优化参数
+2. **质量恢复**：检测到质量下降时自动切换模型
+3. **系统恢复**：检测到服务异常时自动重启
+4. **数据恢复**：检测到数据异常时自动修复
+
+## 5. 安全设计
+
+### 5.1 数据安全
+- **传输加密**：HTTPS/TLS加密所有网络通信
+- **存储加密**：敏感数据加密存储
+- **访问控制**：基于角色的细粒度权限控制
+- **审计日志**：所有操作记录审计日志
+
+### 5.2 系统安全
+- **容器安全**：最小化容器镜像，定期安全更新
+- **网络隔离**：网络策略限制不必要的访问
+- **漏洞扫描**：定期安全扫描和漏洞修复
+- **备份恢复**：定期备份，支持快速恢复
 
 ---
 
-**文档版本**: 1.0  
-**创建日期**: 2026-03-26  
-**更新说明**: 基于需求文档和现有项目实现的概要设计
-
-**关键设计原则**：
-1. **与需求文档对齐**：严格按照需求文档的功能要求设计
-2. **现有项目兼容**：基于当前项目结构进行扩展
-3. **模块化设计**：7个Agent独立可替换
-4. **错误恢复能力**：完善的错误处理和降级策略
-5. **状态持久化**：所有中间状态可恢复
-6. **量化控制**：所有审核和修订都有量化指标
+**文档版本**：2.0  
+**更新日期**：2026-03-26  
+**更新内容**：
+1. 新增MonitorAgent和AlertAgent设计
+2. 增强TrendAgent数据源管理
+3. 新增差异化审核器设计
+4. 完善硬件和部署架构
+5. 优化性能、容错、安全设计
+6. 新增配置管理架构
