@@ -67,6 +67,18 @@ restart_service.py
 stop_auto_run.py
 upload_to_server.ps1
 quick_deploy_commands.sh
+deploy_and_test.py
+deploy_bare_metal.py
+execute_fix.py
+final_fix.py
+final_verification.py
+improve_parse_json.py
+install_missing_deps.py
+quick_check.py
+simple_fix_parse_json.py
+test_deepseek_api.py
+test_final_fix.py
+test_ssh_connection.py
 
 # Deployment scripts (keep only essential)
 !deploy/
