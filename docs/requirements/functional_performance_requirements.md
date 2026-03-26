@@ -1,4 +1,4 @@
-﻿# AI小说生成Agent系统 - 功能与性能需求文档
+# AI小说生成Agent系统 - 功能与性能需求文档
 
 ## 文档概述
 
@@ -17,6 +17,75 @@
 - 统计读者偏好特征（章节长度、更新频率、付费模式）
 - 预测市场趋势走向和潜力题材
 - 基于历史数据给出章节数建议范围
+
+**数据源配置**：
+```yaml
+data_sources:
+  # 主要数据源 - 官方API
+  qidian:
+    type: "api"
+    endpoint: "https://api.qidian.com/trend"
+    rate_limit: "10 requests/minute"
+    fallback: "local_cache"
+    data_format: "json"
+    update_frequency: "hourly"
+  
+  # 备用数据源 - 网页爬虫
+  jjwxc:
+    type: "crawler"
+    base_url: "https://www.jjwxc.net"
+    selectors:
+      hot_list: ".hot-list li"
+      genre_tags: ".tag-item"
+      ranking: ".rank-item"
+    anti_crawler: "rotating_proxy"
+    respect_robots_txt: true
+  
+  # 第三方数据聚合
+  data_aggregator:
+    type: "third_party"
+    provider: "novel_insights_api"
+    api_key: "${NOVEL_INSIGHTS_API_KEY}"
+    metrics: ["heat_index", "reader_demographics", "trend_analysis"]
+  
+  # 本地缓存和备份
+  local_cache:
+    type: "sqlite"
+    path: "/data/genre_library.db"
+    retention: "30_days"
+    backup_frequency: "daily"
+```
+
+**相似度计算方案**：
+```python
+# 使用预训练模型进行文本向量化
+similarity_model: "sentence-transformers/all-MiniLM-L6-v2"
+similarity_threshold: 0.7  # 余弦相似度
+min_text_length: 10  # 最小文本长度
+
+# 相似度计算流程
+1. 文本预处理：去除停用词、标点符号标准化
+2. 向量化：使用预训练模型生成384维向量
+3. 相似度计算：余弦相似度 = (A·B) / (||A|| × ||B||)
+4. 阈值过滤：相似度≥0.7的视为相似题材
+5. 聚类分析：DBSCAN算法识别题材簇
+```
+
+**数据质量指标**：
+```yaml
+quality_metrics:
+  completeness: ≥95%  # 数据完整率（必填字段填充率）
+  timeliness: ≤24h    # 数据时效性（从采集到可用的时间）
+  accuracy: ≥90%      # 数据准确率（与人工标注对比）
+  consistency: ≥85%   # 跨平台一致性（不同平台数据对比）
+  uniqueness: ≥99%    # 数据唯一性（去重后数据占比）
+  
+validation_rules:
+  - "阅读量必须为正整数"
+  - "热度指数必须在0-100范围内"
+  - "题材标签必须存在于标准分类中"
+  - "时间戳格式必须符合ISO 8601"
+```
 
 **输出产物**：
 - `trend_analysis.json`：结构化趋势分析报告
@@ -207,6 +276,98 @@
               循环计数>3？ -> 是 -> 调整策略或人工干预
                     |否
                 继续修订循环
+```
+
+**差异化审核标准**：
+```yaml
+# 根据题材类型应用不同的审核标准
+review_standards:
+  
+  # 1. 高质量成熟题材（如都市现实、玄幻奇幻）
+  high_quality_genre:
+    description: "市场成熟，读者期待高，要求严格"
+    total_score: ≥85  # 总分要求更高
+    dimension_requirements:
+      structure: ≥75    # 结构要求高
+      character: ≥80    # 人物要求高
+      plot: ≥70        # 情节要求中等
+      market: ≥65      # 市场匹配要求中等
+      style: ≥75       # 风格要求高
+    special_rules:
+      - "不允许出现明显逻辑漏洞"
+      - "人物性格必须稳定一致"
+      - "必须符合主流审美"
+      - "情感表达要细腻真实"
+  
+  # 2. 实验性创新题材（如跨界融合、新兴题材）
+  experimental_genre:
+    description: "创新尝试，允许一定风险"
+    total_score: ≥70  # 总分要求较低
+    dimension_requirements:
+      structure: ≥65    # 结构要求中等
+      character: ≥70    # 人物要求中等
+      plot: ≥60        # 情节要求较低
+      market: ≥55      # 市场匹配要求较低
+      innovation: ≥65  # 创新性要求高（新增维度）
+    special_rules:
+      - "允许适度创新和冒险"
+      - "可以尝试非传统结构"
+      - "接受一定程度的读者接受度风险"
+      - "鼓励新颖的设定和世界观"
+  
+  # 3. 商业化量产题材（如快餐式网文）
+  commercial_genre:
+    description: "追求产量和效率，质量要求适中"
+    total_score: ≥75  # 总分要求中等
+    dimension_requirements:
+      structure: ≥70    # 结构要求中等
+      character: ≥65    # 人物要求中等
+      plot: ≥70        # 情节要求中等（需要吸引读者）
+      market: ≥75      # 市场匹配要求高
+      style: ≥60       # 风格要求较低
+    special_rules:
+      - "强调情节吸引力和更新速度"
+      - "允许一定程度的套路化"
+      - "优先考虑读者留存率"
+      - "节奏要快，爽点要密集"
+  
+  # 4. 文学性精品题材（如现实主义文学）
+  literary_genre:
+    description: "追求文学价值，艺术性要求高"
+    total_score: ≥80  # 总分要求高
+    dimension_requirements:
+      structure: ≥80    # 结构要求高
+      character: ≥85    # 人物要求很高
+      plot: ≥75        # 情节要求高
+      language: ≥85    # 语言要求很高（新增维度）
+      depth: ≥70       # 思想深度要求（新增维度）
+    special_rules:
+      - "强调文学性和思想深度"
+      - "允许较慢的叙事节奏"
+      - "重视语言艺术和修辞"
+      - "人物塑造要有层次感"
+
+# 题材类型识别规则
+genre_type_detection:
+  high_quality:
+    - "heat_index > 90"
+    - "reader_maturity > 0.7"
+    - "market_stability > 0.8"
+  
+  experimental:
+    - "growth_rate > 0.2"
+    - "market_share < 0.1"
+    - "innovation_score > 0.6"
+  
+  commercial:
+    - "production_rate > 0.5"
+    - "reader_retention > 0.6"
+    - "monetization > 0.7"
+  
+  literary:
+    - "critical_acclaim > 0.6"
+    - "award_count > 0"
+    - "depth_score > 0.7"
 ```
 
 **批次固化内容**：
@@ -437,6 +598,627 @@ F1 = 2 × (准确率 × 召回率) / (准确率 + 召回率)
 - 中等问题修订时间：<90秒/问题
 - 严重问题修订时间：<180秒/问题
 
+## 2. 系统性能需求
 
+### 2.1 硬件基准配置
 
+```yaml
+# 性能测试和运行的硬件基准配置
+hardware_baseline:
+  
+  # 开发测试环境（最低要求）
+  development:
+    cpu: "Intel i7-12700K 或同等性能"
+    gpu: "NVIDIA RTX 4070 (12GB) 或同等性能"
+    ram: "32GB DDR4"
+    storage: "512GB NVMe SSD"
+    network: "1Gbps 以太网"
+    os: "Ubuntu 22.04 LTS 或 Windows 11"
+    estimated_cost: "$1,500"
+  
+  # 生产环境（推荐配置）
+  production:
+    cpu: "Intel i9-13900K 或 AMD Ryzen 9 7950X"
+    gpu: "NVIDIA RTX 4090 (24GB) 或同等性能"
+    ram: "64GB DDR5"
+    storage: "1TB NVMe SSD + 2TB HDD 数据存储"
+    network: "10Gbps 以太网"
+    os: "Ubuntu 22.04 LTS"
+    estimated_cost: "$3,500"
+  
+  # 云服务等价配置
+  cloud_equivalents:
+    aws:
+      instance_type: "g5.2xlarge"
+      gpu: "NVIDIA A10G (24GB)"
+      vcpu: 8
+      memory: "32GB"
+      storage: "500GB GP3"
+      estimated_cost: "$2.50/小时"
+    
+    azure:
+      instance_type: "NC6s_v3"
+      gpu: "NVIDIA V100 (16GB)"
+      vcpu: 6
+      memory: "112GB"
+      storage: "500GB Premium SSD"
+      estimated_cost: "$3.05/小时"
+    
+    google_cloud:
+      instance_type: "a2-highgpu-1g"
+      gpu: "NVIDIA A100 (40GB)"
+      vcpu: 12
+      memory: "85GB"
+      storage: "500GB SSD"
+      estimated_cost: "$3.67/小时"
+  
+  # 性能缩放比例
+  scaling_factors:
+    batch_generation_time:
+      rtx_4070: "1.0x (基准)"
+      rtx_4090: "0.7x (快30%)"
+      a100: "0.5x (快50%)"
+    
+    memory_usage:
+      32gb_ram: "1.0x (基准)"
+      64gb_ram: "0.8x (内存压力小20%)"
+      128gb_ram: "0.6x (内存压力小40%)"
+    
+    concurrent_tasks:
+      single_gpu: "3-5 任务"
+      dual_gpu: "6-10 任务"
+      quad_gpu: "12-20 任务"
+```
 
+### 2.2 性能指标要求
+
+#### 2.2.1 3章批次性能基准
+```yaml
+batch_performance:
+  # 最优情况（短章节，简单题材）
+  best_case:
+    chapters: 3
+    avg_length: 2500  # 字
+    genre_complexity: "low"
+    expected_time: "4.5 分钟"
+    memory_peak: "450MB"
+    gpu_utilization: "65%"
+    quality_score: "85分"
+  
+  # 平均情况（标准章节，中等题材）
+  average_case:
+    chapters: 3
+    avg_length: 3000  # 字
+    genre_complexity: "medium"
+    expected_time: "6.5 分钟"
+    memory_peak: "550MB"
+    gpu_utilization: "75%"
+    quality_score: "80分"
+  
+  # 最差情况（长章节，复杂题材）
+  worst_case:
+    chapters: 3
+    avg_length: 4500  # 字
+    genre_complexity: "high"
+    expected_time: "8.5 分钟"
+    memory_peak: "650MB"
+    gpu_utilization: "85%"
+    quality_score: "75分"
+  
+  # 稳定性要求
+  stability:
+    time_std_dev: "≤30% of mean"  # 时间标准差不超过均值的30%
+    memory_variance: "≤20% of mean"  # 内存波动不超过均值的20%
+    success_rate: "≥95%"  # 批次成功率
+    recovery_time: "≤2 分钟"  # 错误恢复时间
+```
+
+#### 2.2.2 并发处理性能
+```yaml
+concurrency_performance:
+  # 单机并发能力
+  single_machine:
+    optimal_tasks: 3-5
+    max_tasks: 8
+    degradation_threshold: "6 任务"  # 超过此数量性能开始下降
+    
+    performance_at_optimal:
+      throughput: "0.8-1.2 任务/分钟"
+      avg_response_time: "7.5 分钟"
+      error_rate: "<3%"
+      resource_utilization: "75-85%"
+    
+    performance_at_max:
+      throughput: "1.0-1.5 任务/分钟"
+      avg_response_time: "10 分钟"
+      error_rate: "<8%"
+      resource_utilization: "90-95%"
+  
+  # 集群扩展能力
+  cluster_scaling:
+    linear_scaling: "up to 4 nodes"  # 4节点内线性扩展
+    efficiency_at_4_nodes: "85%"  # 4节点时效率
+    bottleneck: "shared_storage"  # 主要瓶颈是共享存储
+    
+    estimated_capacity:
+      1_node: "5 并发任务"
+      2_nodes: "9 并发任务"
+      4_nodes: "16 并发任务"
+      8_nodes: "28 并发任务"  # 效率下降
+```
+
+#### 2.2.3 内存使用要求
+```yaml
+memory_requirements:
+  # 峰值内存限制
+  peak_memory:
+    absolute_limit: "700MB"
+    warning_threshold: "600MB"
+    optimal_range: "400-550MB"
+    per_task_baseline: "150MB"
+  
+  # 内存增长控制
+  memory_growth:
+    per_batch_growth: "<20MB"  # 每批次内存增长
+    per_hour_growth: "<50MB"   # 每小时内存增长
+    per_day_growth: "<200MB"   # 每天内存增长
+    memory_leak_threshold: ">300MB/day"  # 超过此值为内存泄漏
+  
+  # 内存回收效率
+  memory_reclamation:
+    after_batch_completion: "≥80% 回收"
+    after_hour_idle: "≥95% 回收"
+    gc_frequency: "每10批次一次"
+    gc_pause_time: "<500ms"
+```
+
+#### 2.2.4 长期运行稳定性
+```yaml
+long_term_stability:
+  # 连续运行要求
+  continuous_operation:
+    uptime_target: "99.5%"  # 月度可用性
+    mean_time_between_failures: "≥168 小时"  # 平均7天无故障
+    mean_time_to_recovery: "≤15 分钟"
+    scheduled_maintenance: "每月4小时"
+  
+  # 性能衰减控制
+  performance_degradation:
+    after_24h: "≤5%"
+    after_7d: "≤15%"
+    after_30d: "≤25%"
+    recovery_after_restart: "100%"  # 重启后恢复性能
+  
+  # 资源使用稳定性
+  resource_stability:
+    cpu_usage_std_dev: "≤15%"
+    memory_usage_std_dev: "≤20%"
+    gpu_usage_std_dev: "≤25%"
+    io_usage_std_dev: "≤30%"
+```
+
+### 2.3 监控告警体系
+
+```yaml
+monitoring_alerting_system:
+  
+  # 1. 监控指标定义
+  metrics:
+    
+    # 性能指标（每批次收集）
+    performance:
+      - name: "batch_generation_time"
+        description: "3章批次生成时间"
+        unit: "seconds"
+        collection_interval: "per_batch"
+        aggregation: "avg_over_10_batches"
+        alert_thresholds:
+          critical: ">600"  # 10分钟
+          warning: ">480"   # 8分钟
+          info: ">390"      # 6.5分钟
+      
+      - name: "memory_usage"
+        description: "内存使用量"
+        unit: "MB"
+        collection_interval: "10_seconds"
+        aggregation: "peak_per_minute"
+        alert_thresholds:
+          critical: ">700"
+          warning: ">600"
+          info: ">550"
+      
+      - name: "gpu_utilization"
+        description: "GPU利用率"
+        unit: "percent"
+        collection_interval: "5_seconds"
+        aggregation: "avg_over_minute"
+        alert_thresholds:
+          critical: ">95%"
+          warning: ">85%"
+          info: ">75%"
+      
+      - name: "cpu_utilization"
+        description: "CPU利用率"
+        unit: "percent"
+        collection_interval: "5_seconds"
+        aggregation: "avg_over_minute"
+        alert_thresholds:
+          critical: ">90%"
+          warning: ">75%"
+          info: ">60%"
+    
+    # 质量指标（每章节/每审核收集）
+    quality:
+      - name: "audit_accuracy"
+        description: "审核准确率"
+        unit: "percent"
+        collection_interval: "per_audit"
+        aggregation: "moving_average_100"
+        alert_thresholds:
+          critical: "<80%"
+          warning: "<85%"
+          info: "<90%"
+      
+      - name: "generation_quality_score"
+        description: "生成质量评分"
+        unit: "score_0_100"
+        collection_interval: "per_chapter"
+        aggregation: "avg_over_10_chapters"
+        alert_thresholds:
+          critical: "<65"
+          warning: "<70"
+          info: "<75"
+      
+      - name: "revision_success_rate"
+        description: "修订成功率"
+        unit: "percent"
+        collection_interval: "per_revision"
+        aggregation: "moving_average_50"
+        alert_thresholds:
+          critical: "<70%"
+          warning: "<75%"
+          info: "<80%"
+    
+    # 业务指标（每小时/每天收集）
+    business:
+      - name: "task_completion_rate"
+        description: "任务完成率"
+        unit: "percent"
+        collection_interval: "hourly"
+        aggregation: "daily_average"
+        alert_thresholds:
+          critical: "<90%"
+          warning: "<95%"
+          info: "<98%"
+      
+      - name: "concurrent_tasks"
+        description: "并发任务数"
+        unit: "count"
+        collection_interval: "1_minute"
+        aggregation: "max_per_hour"
+        alert_thresholds:
+          critical: ">8"
+          warning: ">6"
+          info: ">5"
+      
+      - name: "error_rate"
+        description: "错误率"
+        unit: "percent"
+        collection_interval: "per_task"
+        aggregation: "hourly_average"
+        alert_thresholds:
+          critical: ">10%"
+          warning: ">5%"
+          info: ">3%"
+  
+  # 2. 告警规则和动作
+  alert_rules:
+    
+    # 严重告警（需要立即处理）
+    critical:
+      - condition: "batch_generation_time > 600"  # 10分钟
+        description: "批次生成严重超时"
+        actions:
+          - "send_slack: #system-alerts-critical @here 批次生成严重超时！"
+          - "send_email: sysadmin@example.com,oncall@example.com"
+          - "auto_restart_service: after_3_occurrences"
+          - "escalate_to_oncall: immediately"
+        cooldown: "5_minutes"
+        auto_recovery: "reduce_batch_size: from_3_to_2"
+      
+      - condition: "memory_usage > 700"  # MB
+        description: "内存使用超过安全阈值"
+        actions:
+          - "send_slack: #system-alerts-critical 内存使用超过700MB！"
+          - "trigger_memory_cleanup"
+          - "reduce_concurrent_tasks: to_50%"
+          - "dump_memory_snapshot: for_analysis"
+        cooldown: "2_minutes"
+        auto_recovery: "clear_model_cache"
+      
+      - condition: "error_rate > 10% for 5_minutes"
+        description: "错误率持续过高"
+        actions:
+          - "send_slack: #system-alerts-critical @channel 错误率超过10%！"
+          - "enable_maintenance_mode"
+          - "notify_development_team: urgent"
+          - "switch_to_degraded_mode"
+        cooldown: "10_minutes"
+        auto_recovery: "restart_failed_services"
+    
+    # 警告告警（需要关注）
+    warning:
+      - condition: "batch_generation_time > 480"  # 8分钟
+        description: "批次生成时间偏长"
+        actions:
+          - "send_slack: #system-alerts-warning 批次生成时间偏长"
+          - "log_warning"
+          - "increase_monitoring_frequency: to_30_seconds"
+          - "suggest_optimization"
+        cooldown: "15_minutes"
+        auto_recovery: "optimize_model_loading"
+      
+      - condition: "memory_usage > 600"  # MB
+        description: "内存使用偏高"
+        actions:
+          - "send_slack: #system-alerts-warning 内存使用偏高"
+          - "log_warning"
+          - "suggest_memory_optimization"
+          - "increase_gc_frequency"
+        cooldown: "5_minutes"
+        auto_recovery: "run_garbage_collection"
+      
+      - condition: "audit_accuracy < 85% for_1_hour"
+        description: "审核准确率下降"
+        actions:
+          - "send_slack: #system-alerts-warning 审核准确率下降"
+          - "trigger_model_recalibration"
+          - "increase_manual_audit_sample: to_20%"
+          - "notify_quality_team"
+        cooldown: "30_minutes"
+        auto_recovery: "switch_to_backup_audit_model"
+    
+    # 信息告警（记录日志）
+    info:
+      - condition: "task_completion_rate < 95%"
+        description: "任务完成率略低"
+        actions:
+          - "log_info"
+          - "update_dashboard"
+          - "notify_operations_team"
+        cooldown: "1_hour"
+      
+      - condition: "generation_quality_score < 75"
+        description: "生成质量评分下降"
+        actions:
+          - "log_info"
+          - "notify_quality_team"
+          - "increase_quality_checks"
+        cooldown: "2_hours"
+      
+      - condition: "concurrent_tasks > 5"
+        description: "并发任务数较高"
+        actions:
+          - "log_info"
+          - "update_capacity_planning"
+          - "consider_scaling"
+        cooldown: "30_minutes"
+  
+  # 3. 自动恢复机制
+  auto_recovery:
+    
+    # 性能恢复
+    performance_recovery:
+      - trigger: "batch_generation_time > 500 for_3_consecutive_batches"
+        action: "reduce_batch_size: from_3_to_2"
+        cooldown: "10_minutes"
+        revert_condition: "batch_generation_time < 400 for_5_consecutive_batches"
+        revert_action: "restore_batch_size: to_3"
+        max_retries: 3
+      
+      - trigger: "memory_usage > 650 for_2_minutes"
+        action: "clear_model_cache"
+        cooldown: "5_minutes"
+        revert_condition: "memory_usage < 550 for_5_minutes"
+        revert_action: "restore_cache_settings"
+        effectiveness: "80%_reduction"
+    
+    # 质量恢复
+    quality_recovery:
+      - trigger: "audit_accuracy < 80% for_30_minutes"
+        action: "switch_to_backup_audit_model"
+        cooldown: "15_minutes"
+        revert_condition: "audit_accuracy > 90% for_1_hour"
+        revert_action: "switch_back_to_primary_model"
+        fallback_model: "rule_based_auditor"
+      
+      - trigger: "generation_quality_score < 70 for_10_chapters"
+        action: "enable_strict_quality_checks"
+        cooldown: "30_minutes"
+        revert_condition: "generation_quality_score > 80 for_20_chapters"
+        revert_action: "disable_strict_quality_checks"
+        strict_mode: "double_validation"
+    
+    # 系统恢复
+    system_recovery:
+      - trigger: "error_rate > 15% for_10_minutes"
+        action: "restart_failed_services"
+        cooldown: "5_minutes"
+        max_retries: 3
+        escalation: "if_failed_3_times_notify_oncall"
+        services: ["llm_service", "generation_service", "audit_service"]
+      
+      - trigger: "service_unresponsive for_1_minute"
+        action: "failover_to_backup_cluster"
+        cooldown: "2_minutes"
+        revert_condition: "primary_cluster_healthy for_5_minutes"
+        revert_action: "failback_to_primary_cluster"
+        health_check: "every_10_seconds"
+  
+  # 4. 仪表盘和报告
+  dashboard:
+    
+    # 实时仪表盘
+    realtime:
+      - name: "系统健康总览"
+        metrics: ["cpu_utilization", "memory_usage", "error_rate"]
+        refresh_interval: "5_seconds"
+        visualization: "time_series_chart"
+        layout: "top_row"
+      
+      - name: "性能监控"
+        metrics: ["batch_generation_time", "concurrent_tasks", "task_completion_rate"]
+        refresh_interval: "10_seconds"
+        visualization: "gauge_charts"
+        layout: "middle_row"
+      
+      - name: "质量监控"
+        metrics: ["audit_accuracy", "generation_quality_score", "revision_success_rate"]
+        refresh_interval: "30_seconds"
+        visualization: "bar_charts"
+        layout: "bottom_row"
+    
+    # 历史报告
+    historical:
+      - name: "日报"
+        metrics: "all"
+        aggregation: "daily"
+        delivery_time: "08:00"
+        recipients: ["team@example.com", "qa@example.com"]
+        format: ["html", "pdf", "json"]
+      
+      - name: "周报"
+        metrics: ["avg_performance", "quality_trends", "system_availability"]
+        aggregation: "weekly"
+        delivery_time: "Monday 09:00"
+        recipients: ["management@example.com", "product@example.com"]
+        format: ["pdf", "ppt"]
+      
+      - name: "月报"
+        metrics: ["business_metrics", "cost_analysis", "improvement_areas"]
+        aggregation: "monthly"
+        delivery_time: "1st 10:00"
+        recipients: ["executives@example.com", "finance@example.com"]
+        format: ["pdf", "excel"]
+  
+  # 5. 集成和通知
+  integrations:
+    
+    # 通知渠道
+    notifications:
+      slack:
+        channels:
+          critical: "#system-alerts-critical"
+          warning: "#system-alerts-warning"
+          info: "#system-alerts-info"
+          operations: "#operations-daily"
+        rate_limit: "10_messages_per_minute"
+        webhook_url: "${SLACK_WEBHOOK_URL}"
+      
+      email:
+        recipients:
+          critical: ["sysadmin@example.com", "oncall@example.com"]
+          warning: ["devops@example.com", "qa@example.com"]
+          info: ["team@example.com", "stakeholders@example.com"]
+        smtp_server: "smtp.example.com"
+        from_address: "monitor@ai-novel-agent.example.com"
+      
+      sms:
+        enabled: true
+        recipients: ["+8613800138000"]  # 值班手机号
+        provider: "twilio"
+        rate_limit: "5_messages_per_hour"
+      
+      webhook:
+        endpoints:
+          pagerduty: "https://events.pagerduty.com/v2/enqueue"
+          opsgenie: "https://api.opsgenie.com/v2/alerts"
+          custom_monitor: "https://internal-monitor.example.com/webhook"
+    
+    # 监控工具集成
+    monitoring_tools:
+      prometheus:
+        enabled: true
+        scrape_interval: "15_seconds"
+        retention: "30_days"
+        metrics_path: "/metrics"
+        port: 9090
+      
+      grafana:
+        enabled: true
+        dashboards: ["system_health", "performance", "quality", "business"]
+        alerting: true
+        url: "https://grafana.example.com"
+      
+      elk_stack:
+        enabled: true
+        elasticsearch_url: "http://elasticsearch:9200"
+        logstash_host: "logstash"
+        kibana_url: "https://kibana.example.com"
+        log_retention: "90_days"
+      
+      datadog:
+        enabled: false  # 可选
+        api_key: "${DATADOG_API_KEY}"
+        metrics_prefix: "ai_novel_agent"
+        tags: ["env:production", "service:generation"]
+```
+
+## 3. 系统健壮性需求
+
+### 3.1 错误处理和恢复
+- **错误分类**：网络错误、资源错误、逻辑错误、数据错误
+- **重试策略**：指数退避重试，最大重试次数3次
+- **降级策略**：主服务不可用时自动切换到简化模式
+- **熔断机制**：错误率超过阈值时自动熔断，避免雪崩
+
+### 3.2 数据一致性和完整性
+- **数据验证**：输入输出数据格式验证
+- **事务处理**：关键操作的事务性保证
+- **数据备份**：定时备份，支持点时间恢复
+- **一致性检查**：定期数据一致性校验
+
+### 3.3 安全性和合规性
+- **数据安全**：敏感数据加密存储和传输
+- **访问控制**：基于角色的访问控制（RBAC）
+- **审计日志**：所有操作记录审计日志
+- **合规要求**：符合相关法律法规要求
+
+## 4. 可扩展性需求
+
+### 4.1 水平扩展
+- **无状态设计**：支持多实例部署
+- **负载均衡**：自动负载均衡和故障转移
+- **服务发现**：动态服务注册和发现
+- **配置管理**：集中式配置管理
+
+### 4.2 垂直扩展
+- **资源隔离**：关键服务资源隔离
+- **性能调优**：支持参数调优和优化
+- **容量规划**：基于监控数据的容量规划
+- **升级维护**：支持滚动升级和热更新
+
+## 5. 部署和运维需求
+
+### 5.1 部署要求
+- **容器化**：支持Docker容器化部署
+- **编排**：支持Kubernetes编排
+- **配置化**：所有配置外部化
+- **自动化**：支持CI/CD自动化部署
+
+### 5.2 运维要求
+- **监控告警**：完善的监控告警体系
+- **日志管理**：集中式日志管理和分析
+- **性能分析**：性能瓶颈分析和优化
+- **容量管理**：基于使用的容量管理
+
+---
+
+**文档版本**：2.0  
+**更新日期**：2026-03-26  
+**更新内容**：
+1. 新增数据源配置详情
+2. 新增差异化审核标准体系
+3. 新增硬件基准配置
+4. 新增完整的监控告警体系
+5. 优化性能指标和稳定性要求
