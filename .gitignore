@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+backend/data/
+backend/memory/
+
+# Test and debug scripts
+check_*.py
+fix_*.py
+test_*.py
+clean_*.py
+force_*.py
+simple_*.py
+direct_*.py
+setup_*.py
+verify_*.py
+restart_service.py
+stop_auto_run.py
+upload_to_server.ps1
+quick_deploy_commands.sh
+
+# Deployment scripts (keep only essential)
+!deploy/
+deploy/*.pyc
+deploy/__pycache__/
+
+# OpenClaw config
+.openclaw/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# Security
+secrets.txt
+credentials.json
+*.pem
+*.key
+*.crt

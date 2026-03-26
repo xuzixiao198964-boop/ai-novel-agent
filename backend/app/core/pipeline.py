@@ -1,0 +1,547 @@
+# -*- coding: utf-8 -*-
+"""流水线：Trend→Style→Planner→[Writer→Polish→每5章Auditor(→重写再审计)]→Reviser"""
+import json
+import shutil
+import threading
+import time
+import traceback
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from app.core.state import (
+    get_current_task_id,
+    set_current_task_id,
+    register_stop_flag,
+    update_task_meta,
+    get_task_meta,
+    create_task,
+    get_agent_progress,
+    get_auto_run,
+    set_auto_run,
+    TaskStatus,
+    set_agent_progress,
+    AgentStatus,
+    append_agent_log,
+    _task_dir,
+    write_output_file,
+    get_run_mode,
+    get_test_mode_chapters,
+    set_test_mode_chapters,
+)
+from app.core.memory import init_memory_for_task
+from app.agents import (
+    TrendAgent,
+    StyleAgent,
+    PlannerAgent,
+    WriterAgent,
+    PolishAgent,
+    AuditorAgent,
+    ReviserAgent,
+    ScorerAgent,
+)
+from app.agents.scorer import score_chapter
+from app.core.config import settings
+from app.core.trend_cap import get_trend_suggested_chapter_cap
+
+_pipeline_thread: threading.Thread | None = None
+_stop_flag = threading.Event()
+_pause_flag = threading.Event()
+register_stop_flag(_stop_flag)
+
+# 打分达标线（≥此分且非 need_regenerate 则不再重生成）
+SCORER_PASS_THRESHOLD = 70.0
+
+# 系统趋势缓存：一周内有效，无需每次生成
+TREND_CACHE_DAYS = 7
+
+
+def _system_trend_dir() -> Path:
+    return settings.data_dir / "trend"
+
+
+def _system_trend_fresh() -> bool:
+    """系统趋势是否存在且在一周内生成"""
+    d = _system_trend_dir()
+    json_f = d / "trend_analysis.json"
+    ts_f = d / "updated_at.txt"
+    if not json_f.exists() or not ts_f.exists():
+        return False
+    try:
+        ts_str = ts_f.read_text(encoding="utf-8").strip().replace("Z", "+00:00")
+        updated = datetime.fromisoformat(ts_str)
+        if updated.tzinfo is not None:
+            updated = updated.replace(tzinfo=None)  # 与 datetime.now() 比较时用本地时间
+        return (datetime.now() - updated) < timedelta(days=TREND_CACHE_DAYS)
+    except Exception:
+        return False
+
+
+def _copy_system_trend_to_task(task_id: str) -> None:
+    """将系统趋势缓存复制到任务 output/trend"""
+    src = _system_trend_dir()
+    dst = _task_dir(task_id) / "output" / "trend"
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in src.iterdir():
+        if f.is_file():
+            shutil.copy2(f, dst / f.name)
+
+
+def _save_task_trend_to_system(task_id: str) -> None:
+    """将任务趋势结果写入系统缓存并更新时间戳"""
+    src = _task_dir(task_id) / "output" / "trend"
+    dst = _system_trend_dir()
+    if not src.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in src.iterdir():
+        if f.is_file():
+            shutil.copy2(f, dst / f.name)
+    (dst / "updated_at.txt").write_text(datetime.now().isoformat(), encoding="utf-8")
+
+
+def _load_scorer_result(task_id: str) -> dict | None:
+    p = _task_dir(task_id) / "output" / "score" / "scorer_report.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _apply_scorer_suggestions_to_agents(task_id: str) -> None:
+    """将打分差异与建议写入供 Writer 等读取的文案，便于下一轮重生成时采纳"""
+    sug_path = _task_dir(task_id) / "output" / "score" / "suggestions.json"
+    if not sug_path.exists():
+        return
+    try:
+        data = json.loads(sug_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    lines = ["# 本轮改进要求（来自打分差异分析）", ""]
+    for s in data.get("suggestions", []):
+        lines.append(f"- **{s.get('agent', '')}**：{s.get('action', '')}")
+    for x in data.get("key_shortcomings", [])[:15]:
+        lines.append(f"- {x}")
+    write_output_file(task_id, "score/scorer_params_for_agents.md", "\n".join(lines))
+
+
+def _run_pipeline(task_id: str) -> None:
+    global _stop_flag, _pause_flag
+    try:
+        original_total = getattr(settings, "total_chapters", 0)
+        original_max_write = getattr(settings, "max_chapters_to_write", 0)
+        run_mode = get_run_mode()
+        # 正式/测试递增上限：以热门趋势分析建议章数为准（非 env 里临时 total=6）
+        normal_target = get_trend_suggested_chapter_cap(task_id)
+        test_chapters = 6
+        if run_mode == "test":
+            test_chapters = min(get_test_mode_chapters(6), normal_target)
+            settings.total_chapters = test_chapters
+            settings.max_chapters_to_write = test_chapters
+        else:
+            settings.total_chapters = original_total
+            settings.max_chapters_to_write = original_max_write
+        set_current_task_id(task_id)
+        _pause_flag.clear()
+        update_task_meta(
+            task_id,
+            status=TaskStatus.RUNNING.value,
+            run_mode=run_mode,
+            normal_target_chapters=normal_target,
+            test_mode_chapters=(test_chapters if run_mode == "test" else None),
+        )
+        init_memory_for_task(task_id)
+        task_d = _task_dir(task_id)
+
+        def _wait_pause():
+            while _pause_flag.is_set() and not _stop_flag.is_set():
+                update_task_meta(task_id, status=TaskStatus.PAUSED.value)
+                time.sleep(1)
+            if not _stop_flag.is_set():
+                update_task_meta(task_id, status=TaskStatus.RUNNING.value)
+
+        def run_agent_once(agent) -> bool:
+            """执行单个 Agent；仅当其完成且状态为 completed 时才返回 True，否则（异常或审核未通过/失败）返回 False，不进入下一 Agent。"""
+            if _stop_flag.is_set():
+                return False
+            _wait_pause()
+            if settings.agent_interval_seconds and settings.agent_interval_seconds > 0:
+                time.sleep(settings.agent_interval_seconds)
+            try:
+                agent.run()
+            except Exception as e:
+                reason = f"{type(e).__name__}: {e}"
+                set_agent_progress(task_id, agent.name, AgentStatus.FAILED.value, 0, f"失败：{reason}")
+                append_agent_log(task_id, agent.name, "error", "Agent 执行失败", {
+                    "reason": reason,
+                    "traceback": traceback.format_exc(),
+                })
+                return False
+            if _stop_flag.is_set():
+                return False
+            # 每个 Agent 必须自己完成且无程序错误、审核通过后才进入下一个
+            prog = get_agent_progress(task_id, agent.name)
+            if prog.get("status") == AgentStatus.FAILED.value:
+                return False
+            _wait_pause()
+            return True
+
+        def run_chain_with_escalation(factories: list):
+            """
+            顺序执行 factories（每项是 ()->Agent）。
+            规则：
+            - 当前级失败：最多重试 3 次
+            - 若 3 次仍失败：回到上一级重新生成（上一级也按同样规则执行），再回来继续当前级
+            - 直到当前级成功才进入下一级
+            """
+            fail_counts = [0] * len(factories)
+            idx = 0
+            while 0 <= idx < len(factories):
+                if _stop_flag.is_set():
+                    return False
+                ok = run_agent_once(factories[idx]())
+                if ok:
+                    fail_counts[idx] = 0
+                    idx += 1
+                    continue
+                fail_counts[idx] += 1
+                if fail_counts[idx] < 3:
+                    continue
+                # 3 次失败：回到上一级重新生成
+                fail_counts[idx] = 0
+                if idx == 0:
+                    return False
+                idx -= 1
+            return idx == len(factories)
+
+        _wait_pause()
+        # 1. 趋势（系统静态：有且一周内则复用，否则生成并写入系统）→风格→策划
+        if _system_trend_fresh():
+            _copy_system_trend_to_task(task_id)
+            set_agent_progress(task_id, TrendAgent.name, AgentStatus.COMPLETED.value, 100, "已复用系统趋势（一周内）")
+            chain = [lambda: StyleAgent(task_id), lambda: PlannerAgent(task_id)]
+        else:
+            if not run_agent_once(TrendAgent(task_id)):
+                update_task_meta(task_id, status=TaskStatus.FAILED.value)
+                return
+            _save_task_trend_to_system(task_id)
+            chain = [lambda: StyleAgent(task_id), lambda: PlannerAgent(task_id)]
+        if not run_chain_with_escalation(chain):
+            update_task_meta(task_id, status=TaskStatus.FAILED.value)
+            return
+
+        # 趋势文件已写入本任务，刷新「正式模式目标章数」供测试模式 6→18→… 递增上限
+        normal_target = get_trend_suggested_chapter_cap(task_id)
+        update_task_meta(task_id, normal_target_chapters=normal_target)
+
+        audit_rewrite_max = getattr(settings, "audit_rewrite_max", 6) or 6  # 从2增加到6
+        chapter_rewrite_max = getattr(settings, "chapter_score_rewrite_max", 6) or 6  # 从3增加到6
+
+        outline_p = task_d / "output" / "planner" / "outline.json"
+        if not outline_p.exists():
+            update_task_meta(task_id, status=TaskStatus.FAILED.value)
+            return
+        try:
+            outline_data = json.loads(outline_p.read_text(encoding="utf-8"))
+            total_chapters = len(outline_data.get("chapters") or [])
+        except Exception:
+            total_chapters = 0
+        max_write = getattr(settings, "max_chapters_to_write", 0) or 0
+        if max_write > 0:
+            total_chapters = min(total_chapters, max_write)
+        if total_chapters < 1:
+            update_task_meta(task_id, status=TaskStatus.FAILED.value)
+            return
+
+        # 2. 逐章写作→润色→单章打分；每写满 3 章做一次区间审计，不合格则重写该区间再审计直至通过
+        audit_batch_size = 3
+        audit_failures_list: list[dict] = []  # 近期质量审计不通过原因（最多 5 次），≥2 次时作为下次创作的避免项
+        for ch in range(1, total_chapters + 1):
+            if _stop_flag.is_set():
+                return
+            _wait_pause()
+            passed = False
+            last_result = {}
+            chapter_scores_history = []  # 记录每次尝试的分数
+            
+            for rewrite in range(chapter_rewrite_max):
+                if _stop_flag.is_set():
+                    return
+                if not run_agent_once(WriterAgent(task_id, start_chapter=ch, end_chapter=ch)):
+                    break
+                if _stop_flag.is_set():
+                    return
+                if not run_agent_once(PolishAgent(task_id, only_chapter=ch)):
+                    break
+                
+                last_result = score_chapter(task_id, ch)
+                current_score = last_result.get("score", 0)
+                chapter_scores_history.append(current_score)
+                
+                if not last_result.get("pass"):
+                    # 智能判断：根据重试次数和分数趋势决定是否继续
+                    should_continue = False
+                    
+                    # 检查是否达到最低可接受标准
+                    min_accept_score = audit_config.score_thresholds["min_accept"]
+                    
+                    # 如果是最后一次尝试，放宽标准
+                    if rewrite == chapter_rewrite_max - 1:
+                        if current_score >= min_accept_score:
+                            should_continue = True
+                            append_agent_log(task_id, "ScorerAgent", "info",
+                                           f"第{ch}章达到最大重试次数，分数{current_score}≥{min_accept_score}，强制通过",
+                                           last_result)
+                    
+                    # 检查分数趋势
+                    if len(chapter_scores_history) >= 2:
+                        score_trend = chapter_scores_history[-1] - chapter_scores_history[-2]
+                        
+                        # 如果分数在提高，继续重试
+                        if score_trend > 5:  # 分数显著提高
+                            append_agent_log(task_id, "ScorerAgent", "info",
+                                           f"第{ch}章分数提高{score_trend}分，继续重试",
+                                           {"current": current_score, "previous": chapter_scores_history[-2]})
+                            continue
+                        # 如果分数稳定在可接受水平
+                        elif abs(score_trend) < 3 and current_score >= 65:
+                            should_continue = True
+                            append_agent_log(task_id, "ScorerAgent", "info",
+                                           f"第{ch}章分数稳定在{current_score}分，质量可接受",
+                                           last_result)
+                        # 如果分数大幅下降
+                        elif score_trend < -10:
+                            append_agent_log(task_id, "ScorerAgent", "warning",
+                                           f"第{ch}章分数下降{abs(score_trend)}分，停止重试",
+                                           {"current": current_score, "previous": chapter_scores_history[-2]})
+                            break
+                    
+                    if should_continue:
+                        passed = True
+                        break
+                    else:
+                        append_agent_log(task_id, "ScorerAgent", "info",
+                                       f"第{ch}章打分未通过（{current_score}分），第{rewrite+1}次重写",
+                                       last_result)
+                        continue
+                
+                passed = True
+                break
+            
+            if not passed:
+                final_score = last_result.get("score", 0) if last_result else 0
+                # 即使未通过，如果分数不是特别低，记录警告但继续
+                if final_score >= 50:
+                    append_agent_log(task_id, "ScorerAgent", "warning",
+                                   f"第{ch}章最终分数{final_score}，继续下一章",
+                                   last_result)
+                else:
+                    append_agent_log(task_id, "ScorerAgent", "error",
+                                   f"第{ch}章质量过低（{final_score}分），已跳过",
+                                   last_result)
+
+            # 每 3 章审计本批：第 3、6、9… 章写完后执行
+            if ch % audit_batch_size == 0 or ch == total_chapters:
+                batch_start = ((ch - 1) // audit_batch_size) * audit_batch_size + 1
+                batch_end = ch
+                for audit_round in range(audit_rewrite_max + 1):
+                    if _stop_flag.is_set():
+                        return
+                    _wait_pause()
+                    
+                    if not run_agent_once(AuditorAgent(task_id, only_chapter_range=(batch_start, batch_end))):
+                        break
+                    
+                    audit_json = task_d / "output" / "audit" / "audit_result.json"
+                    chapters_to_rewrite = []
+                    if audit_json.exists():
+                        try:
+                            ad = json.loads(audit_json.read_text(encoding="utf-8"))
+                            chapters_to_rewrite = [c for c in (ad.get("chapters_to_rewrite") or []) if isinstance(c, int) and batch_start <= c <= batch_end]
+                        except Exception:
+                            pass
+                    if not chapters_to_rewrite:
+                        break
+                    # 记录本次审计不通过原因
+                    ad_reason = ""
+                    if audit_json.exists():
+                        try:
+                            ad = json.loads(audit_json.read_text(encoding="utf-8"))
+                            ad_reason = ad.get("summary") or ""
+                            # 将所有“需要重写的质量维度”都写入避免项，避免 Writer 只修逻辑、不修伏笔/人物。
+                            for key in (
+                                "coherence_issues",
+                                "outline_violations",
+                                "logic_issues",
+                                "ooc_issues",
+                                "plot_hole_issues",
+                            ):
+                                items = ad.get(key) or []
+                                if items:
+                                    ad_reason += "\n" + key + ": " + "; ".join(str(x) for x in items[:5])
+                        except Exception:
+                            pass
+                    audit_failures_list.append({
+                        "chapters": f"第{batch_start}–{batch_end}章",
+                        "reason": ad_reason or "质量未达标需重写",
+                        "chapters_to_rewrite": chapters_to_rewrite,
+                    })
+                    audit_failures_list = audit_failures_list[-5:]
+                    # ≥2 次不通过时，把近期最多 5 次不通过原因写入避免项，供 Writer 读取
+                    use_failures = audit_failures_list[-5:] if len(audit_failures_list) >= 2 else audit_failures_list
+                    if use_failures:
+                        lines = ["# 质量审计不通过原因（请在本次创作中避免）", ""]
+                        for i, r in enumerate(use_failures, 1):
+                            lines.append(f"## {i}. 审核{r.get('chapters','')}不通过")
+                            lines.append(r.get("reason", "") or "未说明")
+                            lines.append("")
+                        write_output_file(task_id, "audit/rewrite_avoid.md", "\n".join(lines))
+                    start_ch = min(chapters_to_rewrite)
+                    end_rw = max(chapters_to_rewrite)
+                    if not run_chain_with_escalation([
+                        lambda: WriterAgent(task_id, start_chapter=start_ch, end_chapter=end_rw),
+                        lambda: PolishAgent(task_id, start_chapter=start_ch, end_chapter=end_rw),
+                    ]):
+                        update_task_meta(task_id, status=TaskStatus.FAILED.value)
+                        return
+
+        # 3. 定稿（修订并输出成书）
+        warning_msg = None
+        if not run_chain_with_escalation([
+            lambda: ReviserAgent(task_id),
+        ]):
+            final_book = task_d / "output" / "final" / "成书_含目录可跳转.md"
+            if final_book.exists():
+                warning_msg = "定稿环节报错，但成书已生成"
+            else:
+                update_task_meta(task_id, status=TaskStatus.FAILED.value)
+                return
+
+        update_task_meta(task_id, status=TaskStatus.COMPLETED.value, warning=warning_msg)
+        # 完成后自动同步到小说平台（书架/平台展示依赖该数据；即使任务后续被清理也可继续阅读）
+        try:
+            from app.novel_platform.db import publish_from_task
+
+            pub = publish_from_task(task_id)
+            update_task_meta(
+                task_id,
+                platform_sync_ok=True,
+                platform_novel_id=pub.get("novel_id"),
+                platform_slug=pub.get("slug"),
+                platform_sync_message=pub.get("message") or "ok",
+            )
+        except Exception as e:
+            append_agent_log(task_id, "ReviserAgent", "warning", "同步小说平台失败", {"error": str(e)})
+            update_task_meta(task_id, platform_sync_ok=False, platform_sync_error=str(e))
+
+        if run_mode == "test":
+            # 成功则下一档 = 当前测试章数×3，直到达到趋势建议章数（normal_target）
+            cap = get_trend_suggested_chapter_cap(task_id)
+            if test_chapters >= cap:
+                update_task_meta(
+                    task_id,
+                    test_mode_next_chapters=cap,
+                    test_mode_synced=True,
+                    normal_target_chapters=cap,
+                )
+            else:
+                nxt = min(test_chapters * 3, cap)
+                set_test_mode_chapters(nxt)
+                update_task_meta(
+                    task_id,
+                    test_mode_next_chapters=nxt,
+                    test_mode_synced=False,
+                    normal_target_chapters=cap,
+                )
+    except Exception as e:
+        update_task_meta(task_id, status=TaskStatus.FAILED.value)
+        raise
+    finally:
+        try:
+            meta = get_task_meta(task_id) or {}
+            if run_mode == "test" and meta.get("status") == TaskStatus.FAILED.value:
+                # 修改：测试失败时不再自动回退到6章
+                # 保持当前的测试章节数，让用户可以重试
+                current_test_chapters = meta.get("test_mode_chapters") or get_test_mode_chapters(6)
+                update_task_meta(task_id, test_mode_reset_reason=f"测试流程失败，但保持{current_test_chapters}章设置，可重试")
+                # 注释掉回退逻辑
+                # set_test_mode_chapters(6)
+                # update_task_meta(task_id, test_mode_chapters=6, test_mode_next_chapters=6, test_mode_reset_reason="测试流程失败，回退到6章")
+        except Exception:
+            pass
+        set_current_task_id(None)
+        _stop_flag.clear()
+        _pause_flag.clear()
+        settings.total_chapters = original_total
+        settings.max_chapters_to_write = original_max_write
+
+
+def _pipeline_thread_target(task_id: str) -> None:
+    """单次流水线执行；结束后若开启自动连续生成则自动创建并启动下一本。"""
+    try:
+        _run_pipeline(task_id)
+    finally:
+        if get_auto_run() and not _stop_flag.is_set():
+            try:
+                next_id = create_task("自动生成小说")
+                start_pipeline(next_id)
+            except Exception:
+                pass
+
+
+def start_pipeline(task_id: str) -> bool:
+    """启动流水线（后台线程）。若已有任务在跑则返回 False。"""
+    global _pipeline_thread, _stop_flag
+    cur = get_current_task_id()
+    if cur:
+        # 如果用户已请求停止，则等待当前流水线快速退出（减少前端频繁触发 409 Conflict）
+        if _stop_flag.is_set():
+            deadline = time.time() + 15
+            while time.time() < deadline and get_current_task_id() == cur:
+                time.sleep(0.3)
+            cur = get_current_task_id()
+            if cur:
+                return False
+        else:
+            return False
+    _stop_flag.clear()
+    _pipeline_thread = threading.Thread(target=_pipeline_thread_target, args=(task_id,), daemon=True)
+    _pipeline_thread.start()
+    return True
+
+
+def stop_pipeline() -> bool:
+    """请求停止当前流水线，并关闭自动连续生成。"""
+    global _stop_flag
+    set_auto_run(False)
+    if not get_current_task_id():
+        return False
+    _stop_flag.set()
+    return True
+
+
+def pause_pipeline() -> bool:
+    """请求暂停当前流水线（当前 agent 完成后暂停）"""
+    global _pause_flag
+    if not get_current_task_id():
+        return False
+    _pause_flag.set()
+    return True
+
+
+def resume_pipeline() -> bool:
+    """请求继续已暂停的流水线"""
+    global _pause_flag
+    if not get_current_task_id():
+        return False
+    _pause_flag.clear()
+    return True
+
+
+def is_pipeline_running() -> bool:
+    return get_current_task_id() is not None
+
+
+def is_pipeline_paused() -> bool:
+    return _pause_flag.is_set()

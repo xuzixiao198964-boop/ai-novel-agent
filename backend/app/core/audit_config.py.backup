@@ -1,0 +1,128 @@
+# -*- coding: utf-8 -*-
+"""智能审核配置"""
+
+from enum import Enum
+from typing import Dict, List, Tuple
+
+
+class IssueSeverity(Enum):
+    """问题严重程度"""
+    CRITICAL = "critical"    # 逻辑矛盾、人设崩坏 - 必须修复
+    MAJOR = "major"          # 连贯性问题、大纲不符 - 应该修复
+    MINOR = "minor"          # 语言表达、细节问题 - 可以容忍
+    COSMETIC = "cosmetic"    # 格式、标点等 - 忽略
+
+
+class AuditStrategy:
+    """审核策略配置"""
+    
+    def __init__(self):
+        # 基础配置
+        self.max_retries = 6  # 最大重试次数
+        self.batch_size = 3   # 批量审核大小
+        
+        # 分数阈值
+        self.score_thresholds = {
+            "strict": 80,     # 严格模式阈值
+            "normal": 70,     # 正常模式阈值
+            "lenient": 60,    # 宽松模式阈值
+            "min_accept": 55  # 最低可接受阈值
+        }
+        
+        # 问题容忍度（随着重试次数增加而提高）
+        self.tolerance_levels = [
+            {  # 第1次尝试：严格
+                IssueSeverity.CRITICAL: 0,  # 不允许
+                IssueSeverity.MAJOR: 1,     # 最多1个
+                IssueSeverity.MINOR: 3,     # 最多3个
+                IssueSeverity.COSMETIC: 10  # 最多10个
+            },
+            {  # 第2-3次尝试：中等
+                IssueSeverity.CRITICAL: 0,
+                IssueSeverity.MAJOR: 2,
+                IssueSeverity.MINOR: 5,
+                IssueSeverity.COSMETIC: 20
+            },
+            {  # 第4-5次尝试：宽松
+                IssueSeverity.CRITICAL: 0,
+                IssueSeverity.MAJOR: 3,
+                IssueSeverity.MINOR: 8,
+                IssueSeverity.COSMETIC: 999  # 不限
+            },
+            {  # 第6+次尝试：非常宽松
+                IssueSeverity.CRITICAL: 1,   # 最多允许1个严重问题
+                IssueSeverity.MAJOR: 5,
+                IssueSeverity.MINOR: 999,
+                IssueSeverity.COSMETIC: 999
+            }
+        ]
+        
+        # 智能决策规则
+        self.rules = {
+            "continue_if": [
+                # 如果满足以下条件，即使有问题也继续前进
+                {"overall_score": 75, "critical_issues": 0},
+                {"overall_score": 65, "critical_issues": 0, "major_issues": 1},
+                {"overall_score": 60, "critical_issues": 0, "major_issues": 2, "retry_count": 3}
+            ],
+            "rewrite_if": [
+                # 如果满足以下条件，必须重写
+                {"critical_issues": 1},
+                {"major_issues": 3, "overall_score": 60},
+                {"score_trend": "decreasing", "current_score": 50}
+            ]
+        }
+    
+    def get_tolerance(self, retry_count: int) -> Dict[IssueSeverity, int]:
+        """根据重试次数获取容忍度配置"""
+        level_index = min(retry_count, len(self.tolerance_levels) - 1)
+        return self.tolerance_levels[level_index]
+    
+    def should_continue(self, audit_data: Dict, retry_count: int, chapter_scores: List[float]) -> Tuple[bool, str]:
+        """
+        智能判断是否应该继续前进
+        返回：(是否继续, 原因)
+        """
+        scores = audit_data.get("scores", {})
+        overall_score = scores.get("overall", 0)
+        
+        # 统计问题数量
+        critical_issues = len(audit_data.get("logic_issues") or []) + len(audit_data.get("ooc_issues") or [])
+        major_issues = len(audit_data.get("coherence_issues") or []) + len(audit_data.get("outline_violations") or [])
+        minor_issues = len(audit_data.get("plot_hole_issues") or [])
+        
+        # 获取当前容忍度
+        tolerance = self.get_tolerance(retry_count)
+        
+        # 检查严重问题
+        if critical_issues > tolerance[IssueSeverity.CRITICAL]:
+            return False, f"严重问题过多({critical_issues}个)，需要重写"
+        
+        # 检查主要问题
+        if major_issues > tolerance[IssueSeverity.MAJOR]:
+            return False, f"主要问题过多({major_issues}个)，需要重写"
+        
+        # 检查分数
+        required_score = self.score_thresholds["min_accept"]
+        if retry_count == 0:
+            required_score = self.score_thresholds["strict"]
+        elif retry_count <= 2:
+            required_score = self.score_thresholds["normal"]
+        elif retry_count <= 4:
+            required_score = self.score_thresholds["lenient"]
+        
+        if overall_score < required_score:
+            return False, f"分数过低({overall_score}<{required_score})，需要重写"
+        
+        # 检查分数趋势（如果有历史分数）
+        if len(chapter_scores) >= 2:
+            score_trend = chapter_scores[-1] - chapter_scores[-2]
+            if score_trend < -15:  # 分数大幅下降
+                return False, f"分数下降{abs(score_trend)}分，需要重新评估"
+        
+        # 所有检查通过，可以继续
+        return True, f"质量可接受(分数:{overall_score}, 严重问题:{critical_issues}, 主要问题:{major_issues})"
+
+
+# 全局配置实例
+audit_config = AuditStrategy()

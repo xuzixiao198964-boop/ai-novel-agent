@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI小说生成Agent系统 - 进度可视化</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <header class="header">
+      <h1>AI小说生成Agent系统</h1>
+      <div class="header-meta">
+        <span id="runModeBadge" class="mode-badge">模式：正式模式</span>
+        <button type="button" id="btnToggleMode" class="btn-mode">切到测试6章</button>
+        <span id="refreshStatus">每 <span id="refreshVal">30</span> 秒刷新</span>
+        <button type="button" id="btnRefresh">立即刷新</button>
+        <a href="/novel/index.html" target="_blank" rel="noopener" class="btn-bookshelf">小说平台</a>
+        <a href="bookshelf.html" class="btn-bookshelf">书架</a>
+      </div>
+    </header>
+
+    <section class="panel task-panel">
+      <h2>任务管理</h2>
+      <div class="task-actions overall-control">
+        <span class="control-label">总体控制：</span>
+        <button type="button" id="btnStart" disabled>启动</button>
+        <button type="button" id="btnStop" disabled>停止</button>
+        <button type="button" id="btnPause" disabled>暂停</button>
+        <button type="button" id="btnResume" disabled>继续</button>
+        <label class="auto-run-label"><input type="checkbox" id="chkAutoRun" /> 自动连续生成</label>
+        <span class="current-run" id="currentRun"></span>
+      </div>
+      <p class="hint">启动：自动创建并开始生成小说（未选任务时先创建）；勾选「自动连续生成」则当前本结束后自动开始下一本。停止：结束当前并关闭自动连续；暂停/继续：仅暂停/继续当前任务。</p>
+      <div class="task-actions">
+        <input type="text" id="taskName" value="新小说任务" placeholder="任务名称" />
+        <button type="button" id="btnCreateTask">创建任务</button>
+        <button type="button" id="btnCreateAndStart">创建并启动</button>
+      </div>
+      <div class="task-list-wrap">
+        <ul id="taskList"></ul>
+      </div>
+    </section>
+
+    <section class="panel progress-panel">
+      <h2>总进度</h2>
+      <div id="overallProgress" class="overall-progress"></div>
+      <div id="agentCards" class="agent-cards"></div>
+    </section>
+
+    <section class="panel detail-panel">
+      <h2>Agent 详情与日志</h2>
+      <div class="agent-select">
+        <label>选择 Agent：</label>
+        <select id="agentSelect">
+          <option value="TrendAgent">TrendAgent - 热门趋势分析</option>
+          <option value="StyleAgent">StyleAgent - 风格解析</option>
+          <option value="PlannerAgent">PlannerAgent - 策划大纲</option>
+          <option value="WriterAgent">WriterAgent - 正文生成</option>
+          <option value="PolishAgent">PolishAgent - 润色</option>
+          <option value="AuditorAgent">AuditorAgent - 质量审计</option>
+          <option value="ReviserAgent">ReviserAgent - 修订</option>
+        </select>
+      </div>
+      <div id="agentDetail" class="agent-detail"></div>
+      <div id="logContainer" class="log-container"></div>
+    </section>
+
+    <section class="panel files-panel">
+      <h2>文件管理（按 Agent 展示）</h2>
+      <p class="hint">点击下方 Agent 查看该 Agent 的产出文件</p>
+      <div id="agentFileTabs" class="agent-file-tabs"></div>
+      <div id="agentFileList" class="file-list"></div>
+    </section>
+
+    <section class="panel novel-panel">
+      <h2>小说成书</h2>
+      <div id="novelToc" class="novel-toc"></div>
+    </section>
+  </div>
+
+  <div id="previewModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <span id="modalTitle" class="modal-title"></span>
+        <button type="button" class="modal-close" id="modalClose">&times;</button>
+      </div>
+      <div id="modalChapterNav" class="modal-chapter-nav" style="display:none;">
+        <button type="button" id="btnPrevChapter">上一章</button>
+        <span id="chapterIndicator"></span>
+        <button type="button" id="btnNextChapter">下一章</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

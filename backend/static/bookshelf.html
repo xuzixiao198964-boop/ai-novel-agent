@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>书架 - AI小说生成</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .bookshelf-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; margin-bottom: 1rem; }
+    .bookshelf-header h1 { margin: 0; font-size: 1.35rem; }
+    .book-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+    .book-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; cursor: pointer; transition: border-color 0.2s; }
+    .book-card:hover { border-color: var(--completed); }
+    .book-card .book-title { font-weight: 600; margin-bottom: 0.25rem; }
+    .book-card .book-meta { font-size: 0.85rem; color: var(--muted); }
+    .toc-view .toc-title { font-weight: 600; margin-bottom: 0.75rem; font-size: 1.1rem; }
+    .toc-view .back-link { display: inline-block; margin-bottom: 0.75rem; color: var(--completed); text-decoration: none; font-size: 0.9rem; }
+    .toc-view .back-link:hover { text-decoration: underline; }
+    .toc-view .toc-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
+    .toc-view .toc-list li { padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+    .toc-view .toc-list a { color: var(--completed); text-decoration: none; }
+    .toc-view .toc-list a:hover { text-decoration: underline; }
+    .chapter-view .chapter-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
+    .chapter-view .chapter-nav a, .chapter-view .chapter-nav span { padding: 0.4rem 0.75rem; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); text-decoration: none; font-size: 0.9rem; }
+    .chapter-view .chapter-nav a:hover { background: var(--border); }
+    .chapter-view .chapter-nav a.disabled { pointer-events: none; opacity: 0.5; }
+    .chapter-view .chapter-content { line-height: 1.8; padding: 1rem; background: #0d1117; color: #e6edf3; border-radius: var(--radius); min-height: 12em; }
+    .chapter-view .chapter-content h3 { margin-top: 0; color: #e6edf3; }
+    .chapter-view .chapter-content p { color: #e6edf3; }
+    .chapter-view .chapter-content.unavailable { color: #8b949e; }
+    .empty-hint { color: var(--muted); padding: 2rem; text-align: center; }
+    .book-section { margin-bottom: 1.5rem; }
+    .book-section .section-title { font-size: 1rem; color: var(--muted); margin: 0 0 0.5rem 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="bookshelf-header">
+      <h1>书架</h1>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span id="loginRole" class="book-meta"></span>
+        <a href="/novel/index.html" target="_blank" rel="noopener" class="btn-bookshelf">小说平台</a>
+        <a href="index.html" class="btn-bookshelf">返回工作台</a>
+      </div>
+    </div>
+
+    <div id="loginPanel" class="panel" style="display:none;">
+      <h2>小说站登录</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input id="loginUser" placeholder="用户名：admin / user" style="max-width:220px;" />
+        <input id="loginPass" type="password" placeholder="密码" style="max-width:220px;" />
+        <button id="btnLogin" class="btn-bookshelf" type="button">登录</button>
+      </div>
+      <p id="loginHint" class="empty-hint" style="padding:0.5rem 0 0; text-align:left;"></p>
+    </div>
+
+    <div id="bookListPanel" class="panel">
+      <h2>已发布小说</h2>
+      <div id="bookListMale" class="book-section">
+        <h3 class="section-title">男频</h3>
+        <div class="book-list"></div>
+      </div>
+      <div id="bookListFemale" class="book-section">
+        <h3 class="section-title">女频</h3>
+        <div class="book-list"></div>
+      </div>
+      <p id="bookListEmpty" class="empty-hint" style="display:none;">暂无已发布小说，请先在工作台完成一部作品。</p>
+    </div>
+
+    <div id="tocPanel" class="panel" style="display:none;">
+      <a href="bookshelf.html" class="back-link">← 返回书架</a>
+      <div id="tocTitle" class="toc-title"></div>
+      <ul id="tocList" class="toc-list"></ul>
+    </div>
+
+    <div id="chapterPanel" class="panel" style="display:none;">
+      <a href="#" id="chapterBackToToc" class="back-link">← 返回目录</a>
+      <div class="chapter-view">
+        <div id="chapterNav" class="chapter-nav"></div>
+        <div id="chapterBody" class="chapter-content"></div>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    const API = "/api";
+    const params = new URLSearchParams(location.search);
+    const taskId = params.get("task");
+    const ch = params.get("ch");
+
+    function api(path) {
+      const token = localStorage.getItem("bookshelf_token") || "";
+      return fetch(API + path, { headers: token ? { Authorization: "Bearer " + token } : {} })
+        .then(async r => {
+          if (!r.ok) {
+            let msg = r.statusText;
+            try {
+              const d = await r.json();
+              if (d && d.detail) msg = d.detail;
+            } catch (_) {}
+            throw new Error(msg);
+          }
+          return r.json();
+        });
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return "";
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function renderBookList(books, container) {
+      if (!books.length) {
+        container.innerHTML = "<p class='empty-hint'>暂无</p>";
+        return;
+      }
+      const role = localStorage.getItem("bookshelf_role") || "";
+      const isAdmin = role === "admin";
+      container.innerHTML = books.map(b => `
+        <div class="book-card" data-task="${escapeHtml(b.task_id)}">
+          <div class="book-title">${escapeHtml(b.title)}</div>
+          <div class="book-meta">${b.chapter_count || 0} 章 · ${(b.created_at || "").slice(0, 10)}</div>
+          ${isAdmin ? `<button type="button" class="btn-bookshelf btn-del" data-task="${escapeHtml(b.task_id)}" style="margin-top:8px;">删除</button>` : ""}
+        </div>
+      `).join("");
+      container.querySelectorAll(".book-card").forEach(card => {
+        if (card.querySelector(".btn-del")) return;
+        card.addEventListener("click", () => { location.href = "bookshelf.html?task=" + encodeURIComponent(card.dataset.task); });
+      });
+      container.querySelectorAll(".btn-del").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.task;
+          if (!confirm("确认删除这本小说？")) return;
+          const token = localStorage.getItem("bookshelf_token") || "";
+          fetch(API + "/bookshelf/books/" + encodeURIComponent(id), { method: "DELETE", headers: token ? { Authorization: "Bearer " + token } : {} })
+            .then(async r => {
+              if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                throw new Error(d.detail || r.statusText);
+              }
+              return r.json();
+            })
+            .then(() => showList())
+            .catch(err => alert(err.message || "删除失败"));
+        });
+      });
+    }
+
+    function showList() {
+      document.getElementById("bookListPanel").style.display = "block";
+      document.getElementById("tocPanel").style.display = "none";
+      document.getElementById("chapterPanel").style.display = "none";
+      api("/bookshelf").then(data => {
+        const books = data.books || [];
+        const emptyEl = document.getElementById("bookListEmpty");
+        if (!books.length) {
+          document.querySelector("#bookListMale .book-list").innerHTML = "";
+          document.querySelector("#bookListFemale .book-list").innerHTML = "";
+          emptyEl.style.display = "block";
+          return;
+        }
+        emptyEl.style.display = "none";
+        const male = books.filter(b => (b.genre_type || "男频") === "男频");
+        const female = books.filter(b => (b.genre_type || "女频") === "女频");
+        renderBookList(male, document.querySelector("#bookListMale .book-list"));
+        renderBookList(female, document.querySelector("#bookListFemale .book-list"));
+      }).catch(() => {
+        document.getElementById("bookListEmpty").textContent = "加载失败";
+        document.getElementById("bookListEmpty").style.display = "block";
+      });
+    }
+
+    function showToc(id) {
+      document.getElementById("bookListPanel").style.display = "none";
+      document.getElementById("tocPanel").style.display = "block";
+      document.getElementById("chapterPanel").style.display = "none";
+      api("/tasks/" + id + "/novel/toc").then(data => {
+        document.getElementById("tocTitle").textContent = data.title || "目录";
+        const toc = data.toc || [];
+        const ul = document.getElementById("tocList");
+        ul.innerHTML = toc.map((item, idx) => `
+          <li><a href="bookshelf.html?task=${encodeURIComponent(id)}&ch=${idx}">${escapeHtml(item.label)}</a></li>
+        `).join("");
+      }).catch(() => { showList(); });
+    }
+
+    function showChapter(id, index) {
+      document.getElementById("bookListPanel").style.display = "none";
+      document.getElementById("tocPanel").style.display = "none";
+      document.getElementById("chapterPanel").style.display = "block";
+      document.getElementById("chapterBackToToc").href = "bookshelf.html?task=" + encodeURIComponent(id);
+      api("/tasks/" + id + "/novel/chapters/" + index).then(data => {
+        const total = data.total || 0;
+        const prev = data.prev_index;
+        const next = data.next_index;
+        let navHtml = "";
+        if (prev != null) navHtml += `<a href="bookshelf.html?task=${encodeURIComponent(id)}&ch=${prev}">上一章</a>`;
+        else navHtml += '<span class="disabled">上一章</span>';
+        navHtml += `<span>${(data.index + 1)} / ${total}</span>`;
+        if (next != null) navHtml += `<a href="bookshelf.html?task=${encodeURIComponent(id)}&ch=${next}">下一章</a>`;
+        else navHtml += '<span class="disabled">下一章</span>';
+        document.getElementById("chapterNav").innerHTML = navHtml;
+        const body = document.getElementById("chapterBody");
+        const content = (data.content != null && data.content !== undefined) ? String(data.content) : "";
+        body.classList.remove("unavailable");
+        if (!content.trim()) {
+          body.classList.add("unavailable");
+          body.innerHTML = "<p>本章内容暂不可用，可能尚未生成或解析失败。</p>";
+        } else {
+          body.innerHTML = window.marked ? marked.parse(content) : "<pre>" + escapeHtml(content) + "</pre>";
+        }
+      }).catch(() => {
+        document.getElementById("chapterNav").innerHTML = '<span class="disabled">上一章</span><span>—</span><span class="disabled">下一章</span>';
+        document.getElementById("chapterBody").classList.add("unavailable");
+        document.getElementById("chapterBody").innerHTML = "<p>正文返回不可用（网络或服务器错误），请<a href=\"bookshelf.html?task=" + encodeURIComponent(id) + "\">返回目录</a>重试。</p>";
+      });
+    }
+
+    function showRole() {
+      const role = localStorage.getItem("bookshelf_role") || "";
+      document.getElementById("loginRole").textContent = role ? ("已登录：" + role) : "";
+    }
+
+    function bootAfterLogin() {
+      showRole();
+      if (taskId && ch !== null && ch !== "") {
+        showChapter(taskId, parseInt(ch, 10));
+      } else if (taskId) {
+        showToc(taskId);
+      } else {
+        showList();
+      }
+    }
+
+    function checkLoginAndBoot() {
+      // 书架无需登录即可查看；登录仅用于管理员删除等扩展能力
+      bootAfterLogin();
+    }
+
+    document.getElementById("btnLogin").addEventListener("click", () => {
+      const username = (document.getElementById("loginUser").value || "").trim();
+      const password = (document.getElementById("loginPass").value || "").trim();
+      fetch(API + "/bookshelf/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      })
+        .then(async r => {
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || r.statusText);
+          localStorage.setItem("bookshelf_token", d.token || "");
+          localStorage.setItem("bookshelf_role", d.role || "");
+          document.getElementById("loginPanel").style.display = "none";
+          bootAfterLogin();
+        })
+        .catch(err => {
+          document.getElementById("loginHint").textContent = err.message || "登录失败";
+        });
+    });
+
+    checkLoginAndBoot();
+  </script>
+</body>
+</html>

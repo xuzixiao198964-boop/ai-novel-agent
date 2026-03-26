@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>免费小说阅读</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1><a href="#/">小说阅读</a></h1>
+    <nav>
+      <a href="#/">首页</a>
+      <a href="#/user">用户中心</a>
+    </nav>
+    <div class="search-row">
+      <input type="search" id="q" placeholder="搜索书名、作者…" />
+      <button type="button" class="btn" id="btnSearch">搜索</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="page-home" data-page>
+      <div class="section-title">热门推荐</div>
+      <div id="hotList" class="grid"></div>
+      <div class="section-title">最新更新</div>
+      <div id="latestList" class="grid"></div>
+      <div class="section-title">分类导航</div>
+      <p id="catNav"></p>
+    </div>
+
+    <div id="page-category" class="hidden" data-page>
+      <h2 id="catTitle"></h2>
+      <div class="tabs">
+        <label>排序 <select id="catSort">
+          <option value="hot">热度</option>
+          <option value="update">更新时间</option>
+          <option value="words">字数</option>
+        </select></label>
+      </div>
+      <div id="catList" class="grid"></div>
+    </div>
+
+    <div id="page-detail" class="hidden" data-page>
+      <h2 id="detailTitle"></h2>
+      <p id="detailMeta" class="meta"></p>
+      <p id="detailIntro"></p>
+      <p>
+        <button class="btn" id="btnRead">开始阅读</button>
+        <button class="btn btn-ghost" id="btnFav">加入收藏</button>
+      </p>
+      <div class="section-title">章节目录</div>
+      <div id="detailChapters"></div>
+    </div>
+
+    <div id="page-read" class="hidden" data-page>
+      <div class="read-toolbar">
+        <button type="button" class="btn btn-ghost" onclick="document.documentElement.style.setProperty('--fs','16px')">小字</button>
+        <button type="button" class="btn btn-ghost" onclick="document.documentElement.style.setProperty('--fs','18px')">中字</button>
+        <button type="button" class="btn btn-ghost" onclick="document.documentElement.style.setProperty('--fs','22px')">大字</button>
+        <button type="button" class="btn btn-ghost" onclick="document.documentElement.style.setProperty('--read-bg','#faf8f3')">羊皮纸</button>
+        <button type="button" class="btn btn-ghost" onclick="document.documentElement.style.setProperty('--read-bg','#1a1a1a'); document.body.style.color='#ddd'">夜间</button>
+      </div>
+      <h3 id="readTitle"></h3>
+      <div id="readBody" class="read-page"></div>
+      <div id="readNav" style="margin-top:16px"></div>
+    </div>
+
+    <div id="page-search" class="hidden" data-page>
+      <p id="searchHint"></p>
+      <div id="searchList" class="grid"></div>
+    </div>
+
+    <div id="page-user" class="hidden" data-page>
+      <div id="userGuest">
+        <h2>登录</h2>
+        <form id="formLogin">
+          <p><input id="loginUser" placeholder="用户名" required /></p>
+          <p><input id="loginPass" type="password" placeholder="密码" required /></p>
+          <button class="btn" type="submit">登录</button>
+        </form>
+        <h2>注册</h2>
+        <form id="formReg">
+          <p><input id="regUser" placeholder="用户名" required /></p>
+          <p><input id="regPass" type="password" placeholder="密码（≥6位）" required /></p>
+          <button class="btn" type="submit">注册</button>
+        </form>
+      </div>
+      <div id="userMain" class="hidden">
+        <p>你好，<strong id="userName"></strong></p>
+        <button class="btn btn-ghost" id="btnLogout">退出登录</button>
+        <div class="section-title">我的收藏</div>
+        <div id="favList" class="grid"></div>
+        <div class="section-title">阅读历史</div>
+        <div id="histList" class="grid"></div>
+      </div>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

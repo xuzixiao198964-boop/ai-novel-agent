@@ -1,0 +1,4 @@
+# 开发与测试依赖（在 backend 目录下：先 pip install -r requirements.txt，再 pip install -r requirements-dev.txt）
+# 本文件不重复列出运行时依赖，避免与主环境冲突。
+pytest>=8.0
+pytest-asyncio>=0.23
