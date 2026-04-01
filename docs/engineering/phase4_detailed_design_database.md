@@ -5,76 +5,89 @@
 - **设计日期**: 2026-04-01
 - **设计模型**: Claude 3.5 Sonnet (via Cursor)
 - **工程方法**: OpenClaw软件工程化全流程
-- **设计状态**: 🗄️ 进行中
+- **设计状态**: 🗄️ 已更新（单机优化版）
 
 ## 1. 数据库设计原则
 
 ### 1.1 设计目标
 ```
 1. 数据一致性：保证数据准确性和完整性
-2. 性能优化：支持高并发访问
-3. 可扩展性：支持数据量增长
+2. 资源节约：适配 1GB 内存 / 20GB 磁盘的 VPS 环境
+3. 最少依赖：仅使用 PostgreSQL + 本地文件系统，无 Redis/MinIO/Docker
 4. 安全性：数据安全存储和访问
-5. 可维护性：清晰的表结构和关系
+5. 可维护性：清晰的表结构和关系，自动化运维脚本
 ```
 
 ### 1.2 技术选型
 ```
 主数据库：PostgreSQL 15
 - 理由：功能丰富，ACID支持完善，JSONB支持好
+- 同时承担任务队列（task_queue表）、幂等键、缓存等职责
 
-缓存数据库：Redis 7
-- 理由：性能优秀，数据结构丰富，持久化支持
+进程内缓存：Python cachetools
+- 理由：零额外依赖，内存占用可控，适合单机部署
+- 使用 TTLCache / LRUCache 替代 Redis 缓存
 
-文件存储：MinIO/S3
-- 理由：对象存储，扩展性好，成本可控
+文件存储：本地文件系统
+- 理由：单机部署，无需对象存储服务，减少运维复杂度
+- 路径：/opt/ai-novel-agent/data/
 
-监控数据库：TimescaleDB (可选)
-- 理由：时序数据优化，监控数据存储
+部署方式：systemd 直接管理
+- 理由：1GB内存VPS，无法承受Docker额外开销
 ```
 
 ## 2. 数据库架构设计
 
-### 2.1 数据库分库分表策略
+### 2.1 单库架构策略
 ```
-分库策略：
-1. 业务分库：
-   - 用户库：用户相关数据
-   - 内容库：小说、视频等内容数据
-   - 交易库：支付、订单等交易数据
-   - 日志库：操作日志、系统日志
+部署环境：1GB 内存 VPS，单机 PostgreSQL
+架构原则：单库单实例，不分库不分表
 
-2. 读写分离：
-   - 主库：写操作
-   - 从库：读操作
-   - 只读副本：报表和分析查询
+表分区策略（仅用于日志类大表）：
+1. 按月分区：
+   - audit_logs：审计日志按月分区
+   - system_monitoring：监控数据按月分区
+   - novel_generation_logs：小说生成日志按月分区
+   - video_generation_logs：视频生成日志按月分区
+2. 超过3个月的分区数据归档后删除，控制磁盘占用
 
-分表策略：
-1. 水平分表：
-   - 按用户ID分表：用户相关表
-   - 按时间分表：日志表、监控表
-   - 按类型分表：内容表
-
-2. 垂直分表：
-   - 热点字段分离：频繁访问字段单独存储
-   - 大字段分离：文本、JSON等大字段单独存储
+注意事项：
+- 当前规模不需要读写分离和分库分表
+- 所有表使用同一个 PostgreSQL 数据库
+- 通过索引优化和进程内缓存保证查询性能
 ```
 
-### 2.2 数据库连接池配置
+### 2.2 数据库连接池配置（SQLAlchemy）
 ```
-连接池配置：
-- 最大连接数：100
-- 最小连接数：10
-- 连接超时：30秒
-- 空闲超时：10分钟
-- 测试查询：SELECT 1
+PostgreSQL max_connections = 20（1GB内存约束）
 
-服务连接分配：
-- 用户服务：20连接
-- 小说服务：30连接
-- 视频服务：20连接
-- 支付服务：15连接
-- 发布服务：15连接
+SQLAlchemy 连接池配置：
+- pool_size = 3          # 常驻连接数
+- max_overflow = 2       # 允许临时额外连接
+- pool_timeout = 30      # 等待连接超时（秒）
+- pool_recycle = 1800    # 连接回收时间（秒）
+- pool_pre_ping = True   # 使用前检测连接有效性
+
+连接预算分配（总计 ≤ 20）：
+- FastAPI 主进程：3 + 2 overflow = 最多5连接
+- Celery Worker：2连接（轻量任务处理）
+- 管理/维护：1连接（pg_dump、手动查询等）
+- 预留缓冲：~12连接（应对突发）
+- 总计：约 6~8 活跃连接，远低于 max_connections 上限
+```
+
+```python
+# SQLAlchemy 引擎配置示例
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "postgresql+asyncpg://user:pass@localhost/ai_novel_agent",
+    pool_size=3,
+    max_overflow=2,
+    pool_timeout=30,
+    pool_recycle=1800,
+    pool_pre_ping=True,
+)
 ```
 
 ## 3. 核心数据表设计
@@ -2003,109 +2016,524 @@ CREATE INDEX idx_channel_users_bind_at ON channel_users(bind_at);
 
 ---
 
-## 4. Redis 缓存 Key 设计
+### 3.14 基础设施表（替代 Redis/RabbitMQ）
 
-### 4.1 Key 命名规范
+#### 任务队列表 (task_queue)
 
-```
-命名格式：{业务域}:{子域}:{标识}
-分隔符：冒号 (:)
-所有 key 必须设置 TTL，防止内存泄漏
-```
+> 使用 PostgreSQL 表替代 RabbitMQ/Celery Broker，实现轻量级任务队列。
+> Worker 通过 `SELECT ... FOR UPDATE SKIP LOCKED` 实现并发安全的任务获取。
 
-### 4.2 会话缓存
+```sql
+CREATE TABLE task_queue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_type VARCHAR(50) NOT NULL,    -- novel_generation/video_generation/publish/etc
+    payload JSONB NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending', -- pending/processing/completed/failed
+    priority INT DEFAULT 0,
+    max_retries INT DEFAULT 3,
+    retry_count INT DEFAULT 0,
+    locked_by VARCHAR(100),            -- worker ID
+    locked_at TIMESTAMP,
+    scheduled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-| Key 模式 | 类型 | TTL | 说明 |
-|----------|------|-----|------|
-| `session:{session_id}` | Hash | 30min | 用户会话数据：user_id, role, ip, device |
-| `session:user:{user_id}` | Set | 30min | 用户所有活跃 session_id 集合 |
-| `session:refresh:{refresh_token}` | String | 7d | refresh_token → session_id 映射 |
-
-```redis
--- 示例：存储会话
-HSET session:abc123 user_id "uuid-xxx" role "user" ip "1.2.3.4"
-EXPIRE session:abc123 1800
-
--- 示例：查询用户所有会话
-SMEMBERS session:user:uuid-xxx
-```
-
-### 4.3 限流缓存
-
-| Key 模式 | 类型 | TTL | 说明 |
-|----------|------|-----|------|
-| `rate:{api_path}:{user_id}` | String(counter) | 1min | API 调用频率限制 |
-| `rate:login:{ip}` | String(counter) | 15min | 登录尝试频率限制 |
-| `rate:captcha:{phone}` | String(counter) | 1h | 验证码发送频率限制 |
-| `rate:global:{api_path}` | String(counter) | 1s | 全局 API QPS 限制 |
-
-```redis
--- 示例：滑动窗口限流
-INCR rate:/api/novels:uuid-xxx
-EXPIRE rate:/api/novels:uuid-xxx 60
-
--- 限流配置参考：
--- 普通用户：60次/分钟
--- VIP用户：120次/分钟
--- 企业用户：600次/分钟
+CREATE INDEX idx_task_queue_status_priority ON task_queue(status, priority DESC, scheduled_at);
+CREATE INDEX idx_task_queue_locked ON task_queue(locked_by, locked_at);
 ```
 
-### 4.4 任务进度缓存
+**任务获取示例（Worker 端）：**
+```sql
+-- 获取一个待处理任务（并发安全）
+UPDATE task_queue
+SET status = 'processing',
+    locked_by = 'worker-1',
+    locked_at = CURRENT_TIMESTAMP,
+    started_at = CURRENT_TIMESTAMP
+WHERE id = (
+    SELECT id FROM task_queue
+    WHERE status = 'pending'
+      AND scheduled_at <= CURRENT_TIMESTAMP
+    ORDER BY priority DESC, scheduled_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
 
-| Key 模式 | 类型 | TTL | 说明 |
-|----------|------|-----|------|
-| `task:novel:{novel_id}` | Hash | 24h | 小说生成进度：progress, agent, chapter, status |
-| `task:video:{video_id}` | Hash | 24h | 视频生成进度：progress, step, status |
-| `task:publish:{publish_id}` | Hash | 12h | 发布任务进度 |
-| `task:queue:priority:{level}` | Sorted Set | 永久 | 优先级任务队列 |
+-- 任务完成
+UPDATE task_queue SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+WHERE id = $1;
 
-```redis
--- 示例：更新小说生成进度
-HSET task:novel:uuid-xxx progress 45 agent "WriterAgent" chapter 3 status "running"
-EXPIRE task:novel:uuid-xxx 86400
-
--- 示例：优先级队列
-ZADD task:queue:priority:high <timestamp> "novel:uuid-xxx"
+-- 任务失败（自动重试）
+UPDATE task_queue
+SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'failed' ELSE 'pending' END,
+    retry_count = retry_count + 1,
+    locked_by = NULL,
+    locked_at = NULL,
+    error_message = $2,
+    scheduled_at = CURRENT_TIMESTAMP + INTERVAL '30 seconds' * (retry_count + 1)  -- 指数退避
+WHERE id = $1;
 ```
 
-### 4.5 余额与配额缓存
+**字段说明：**
 
-| Key 模式 | 类型 | TTL | 说明 |
-|----------|------|-----|------|
-| `balance:{user_id}` | String | 5min | 用户余额缓存（短TTL保证一致性） |
-| `quota:{user_id}:novel_words` | Hash | 10min | 小说字数配额：total, used |
-| `quota:{user_id}:video_minutes` | Hash | 10min | 视频分钟配额 |
-| `quota:{user_id}:publish_count` | Hash | 10min | 发布次数配额 |
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| id | UUID | 主键 |
+| task_type | VARCHAR(50) | 任务类型：novel_generation/video_generation/publish/tts 等 |
+| payload | JSONB | 任务参数（如 novel_id、配置等） |
+| status | VARCHAR(20) | 任务状态：pending(待执行)/processing(执行中)/completed(完成)/failed(失败) |
+| priority | INT | 优先级，数字越大越优先 |
+| max_retries | INT | 最大重试次数 |
+| retry_count | INT | 已重试次数 |
+| locked_by | VARCHAR(100) | 锁定该任务的 Worker ID |
+| locked_at | TIMESTAMP | 锁定时间（用于检测僵死任务） |
+| scheduled_at | TIMESTAMP | 计划执行时间（支持延迟任务） |
 
-```redis
--- 示例：余额缓存（读时写入，写时失效）
-SET balance:uuid-xxx "158.50" EX 300
--- 扣费后立即删除缓存
-DEL balance:uuid-xxx
+#### 幂等键表 (idempotent_keys)
+
+> 替代 Redis SETNX，用于防止重复提交（如重复支付、重复生成）。
+
+```sql
+CREATE TABLE idempotent_keys (
+    key VARCHAR(255) PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 定期清理过期的幂等键
+-- DELETE FROM idempotent_keys WHERE created_at < NOW() - INTERVAL '7 days';
 ```
 
-### 4.6 热点数据缓存
+**使用示例：**
+```sql
+-- 尝试插入幂等键（如果已存在则说明是重复请求）
+INSERT INTO idempotent_keys (key) VALUES ('payment:order:uuid-xxx')
+ON CONFLICT (key) DO NOTHING
+RETURNING key;
+-- 返回空 = 重复请求，返回key = 首次请求
+```
 
-| Key 模式 | 类型 | TTL | 说明 |
-|----------|------|-----|------|
-| `content:hot:list` | Sorted Set | 5min | 内容广场热门列表 |
-| `content:detail:{content_id}` | Hash | 10min | 内容详情缓存 |
-| `plan:list` | String(JSON) | 1h | 套餐列表缓存 |
-| `advice:pool:{genre}` | List | 30min | 按体裁的建议池 |
+**字段说明：**
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| key | VARCHAR(255) | 幂等键，格式：`{业务}:{操作}:{ID}`，如 `payment:order:uuid-xxx` |
+| created_at | TIMESTAMP | 创建时间，用于定期清理过期键 |
+
+#### 缓存条目表 (cache_entries)
+
+> PostgreSQL 持久化缓存，用于跨进程共享的缓存场景（如 Celery Worker 需要读取的数据）。
+> 进程内 cachetools 无法跨进程共享时的降级方案。
+
+```sql
+CREATE TABLE cache_entries (
+    cache_key VARCHAR(255) PRIMARY KEY,
+    cache_value JSONB,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_cache_expires ON cache_entries(expires_at);
+
+-- 定期清理过期缓存
+-- DELETE FROM cache_entries WHERE expires_at < NOW();
+```
+
+**使用示例：**
+```sql
+-- 写入/更新缓存
+INSERT INTO cache_entries (cache_key, cache_value, expires_at)
+VALUES ('hot_content_list', '{"items": [...]}', NOW() + INTERVAL '5 minutes')
+ON CONFLICT (cache_key) DO UPDATE
+SET cache_value = EXCLUDED.cache_value,
+    expires_at = EXCLUDED.expires_at;
+
+-- 读取缓存（仅返回未过期的）
+SELECT cache_value FROM cache_entries
+WHERE cache_key = 'hot_content_list' AND expires_at > NOW();
+```
+
+**字段说明：**
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| cache_key | VARCHAR(255) | 缓存键名 |
+| cache_value | JSONB | 缓存值（JSON格式） |
+| expires_at | TIMESTAMP | 过期时间 |
+| created_at | TIMESTAMP | 创建时间 |
 
 ---
 
-## 5. 数据迁移策略
+## 4. 进程内缓存策略
 
-### 5.1 从单库到商业化架构的迁移路径
+> 使用 Python `cachetools` 库替代 Redis，零额外服务依赖，适合 1GB 内存单机部署。
+> 对于需要持久化的缓存场景，使用 PostgreSQL `cache_entries` 表（见 3.14 节）。
+
+### 4.1 缓存架构设计
 
 ```
+缓存层级：
+1. L1 - 进程内缓存（cachetools）：热点数据，毫秒级访问
+2. L2 - PostgreSQL cache_entries 表：持久化缓存，需要跨进程共享的数据
+3. L3 - PostgreSQL 原始表：最终数据源
+
+缓存失效策略：
+- TTL 过期：cachetools.TTLCache 自动过期
+- LRU 淘汰：cachetools.LRUCache 按访问频率淘汰
+- 主动失效：数据更新时手动清除对应缓存
+```
+
+### 4.2 cachetools 缓存配置
+
+```python
+from cachetools import TTLCache, LRUCache
+from cachetools import cached
+import threading
+
+# 全局缓存实例（线程安全）
+_lock = threading.Lock()
+
+# 会话缓存：最多200个会话，30分钟过期
+session_cache = TTLCache(maxsize=200, ttl=1800)
+
+# 用户信息缓存：最多100个用户，10分钟过期
+user_cache = TTLCache(maxsize=100, ttl=600)
+
+# 套餐列表缓存：1小时过期
+plan_cache = TTLCache(maxsize=10, ttl=3600)
+
+# 热门内容缓存：5分钟过期
+hot_content_cache = TTLCache(maxsize=50, ttl=300)
+
+# 配额缓存：5分钟过期（短TTL保证一致性）
+quota_cache = TTLCache(maxsize=200, ttl=300)
+
+# 限流计数器：1分钟窗口
+rate_limit_cache = TTLCache(maxsize=500, ttl=60)
+
+# 建议池缓存：30分钟过期
+advice_cache = TTLCache(maxsize=20, ttl=1800)
+```
+
+### 4.3 缓存使用示例
+
+```python
+# 会话缓存
+def get_session(session_id: str) -> dict | None:
+    with _lock:
+        return session_cache.get(session_id)
+
+def set_session(session_id: str, data: dict):
+    with _lock:
+        session_cache[session_id] = data
+
+def invalidate_session(session_id: str):
+    with _lock:
+        session_cache.pop(session_id, None)
+
+# 限流（简单计数器）
+def check_rate_limit(key: str, max_calls: int = 60) -> bool:
+    with _lock:
+        count = rate_limit_cache.get(key, 0)
+        if count >= max_calls:
+            return False
+        rate_limit_cache[key] = count + 1
+        return True
+
+# 带缓存装饰器的查询
+@cached(cache=plan_cache, lock=_lock)
+def get_subscription_plans():
+    """套餐列表缓存，1小时自动刷新"""
+    return db.query(SubscriptionPlan).filter_by(is_active=True).all()
+```
+
+### 4.4 缓存内存预算
+
+```
+总内存预算：≤ 50MB（进程内缓存）
+
+各缓存估算：
+- session_cache (200条 × ~1KB)    ≈ 200KB
+- user_cache (100条 × ~2KB)       ≈ 200KB
+- plan_cache (10条 × ~1KB)        ≈ 10KB
+- hot_content_cache (50条 × ~2KB) ≈ 100KB
+- quota_cache (200条 × ~0.5KB)    ≈ 100KB
+- rate_limit_cache (500条 × ~0.1KB) ≈ 50KB
+- advice_cache (20条 × ~5KB)      ≈ 100KB
+总计：≈ 1MB（远低于预算，留有充足余量）
+
+注意：cachetools 的 maxsize 已限制条目数量，不会无限增长
+```
+
+### 4.5 缓存与数据库配合
+
+```
+写操作流程（Cache-Aside 模式）：
+1. 更新数据库
+2. 删除对应缓存条目
+3. 下次读取时重新从数据库加载
+
+读操作流程：
+1. 查询进程内缓存
+2. 缓存命中 → 直接返回
+3. 缓存未命中 → 查询数据库 → 写入缓存 → 返回
+
+跨进程共享场景（如Celery Worker需要读取）：
+- 使用 cache_entries 表（PostgreSQL）作为共享缓存层
+- 或直接查询原始表（大多数场景下足够快）
+```
+
+---
+
+## 5. PostgreSQL 性能调优（1GB 内存环境）
+
+### 5.1 postgresql.conf 关键参数
+
+```sql
+-- postgresql.conf 关键参数（1GB 内存 VPS 优化）
+shared_buffers = 128MB          -- 总内存的12%
+effective_cache_size = 256MB    -- 总内存的25%
+work_mem = 4MB                  -- 每个排序/哈希操作
+maintenance_work_mem = 64MB     -- VACUUM/CREATE INDEX
+max_connections = 20            -- 减少连接数节省内存
+wal_buffers = 4MB
+max_wal_size = 256MB            -- 控制WAL磁盘占用
+min_wal_size = 64MB
+checkpoint_timeout = 10min
+random_page_cost = 1.1          -- SSD优化
+effective_io_concurrency = 200  -- SSD优化
+```
+
+### 5.2 内存分配预算
+
+```
+总可用内存：1024MB
+
+PostgreSQL:
+  shared_buffers:      128MB
+  OS cache (effective): 256MB
+  maintenance_work_mem: 64MB（仅维护时使用）
+  work_mem × 连接数:    4MB × 20 = 80MB（理论最大值）
+  其他开销:             ~50MB
+  小计:                ~320MB（常态）/ ~580MB（峰值）
+
+应用层：
+  FastAPI 进程:         ~150MB
+  Celery Worker:        ~100MB
+  系统 + 其他:          ~100MB
+  小计:                ~350MB
+
+总计常态：~670MB，留有约 350MB 作为 OS 缓存和缓冲
+```
+
+### 5.3 自动 VACUUM 配置
+
+```sql
+-- 避免 VACUUM 占用过多资源
+autovacuum_max_workers = 2              -- 默认3，减少到2
+autovacuum_naptime = 60                 -- 检查间隔60秒
+autovacuum_vacuum_cost_delay = 20ms     -- 限制IO速率
+autovacuum_vacuum_cost_limit = 200      -- 限制IO速率
+autovacuum_vacuum_threshold = 50        -- 最少变更行数
+autovacuum_vacuum_scale_factor = 0.1    -- 变更比例阈值
+```
+
+---
+
+## 6. 磁盘空间管理策略（20GB 约束）
+
+### 6.1 磁盘空间预算
+
+```
+总可用磁盘：20GB
+
+预算分配：
+- PostgreSQL 数据:      3GB（含索引）
+- WAL 日志:             512MB（max_wal_size=256MB × 2）
+- PostgreSQL 备份:      300MB（最近3份 × ~100MB）
+- 应用数据文件:         10GB（小说/视频/音频等）
+- 临时文件:             1GB（生成过程中间文件）
+- 系统 + 应用程序:      3GB
+- 预留缓冲:             ~2GB
+总计:                   ~20GB
+```
+
+### 6.2 数据库大小控制
+
+```sql
+-- 查看数据库大小
+SELECT pg_size_pretty(pg_database_size('ai_novel_agent'));
+
+-- 查看各表大小（含索引）
+SELECT 
+    relname AS table_name,
+    pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+    pg_size_pretty(pg_relation_size(relid)) AS data_size,
+    pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid)) AS index_size
+FROM pg_catalog.pg_statio_user_tables
+ORDER BY pg_total_relation_size(relid) DESC;
+
+-- 定期执行 VACUUM FULL 回收空间（会锁表，低峰期执行）
+VACUUM FULL audit_logs;
+VACUUM FULL system_monitoring;
+VACUUM FULL novel_generation_logs;
+VACUUM FULL video_generation_logs;
+
+-- 使用 pg_repack 在线回收空间（不锁表，推荐）
+-- sudo apt install postgresql-15-repack
+-- pg_repack -d ai_novel_agent -t audit_logs
+```
+
+### 6.3 表分区与老数据归档
+
+```sql
+-- 将 audit_logs 改为按月分区表
+CREATE TABLE audit_logs_partitioned (
+    LIKE audit_logs INCLUDING ALL
+) PARTITION BY RANGE (created_at);
+
+-- 创建月度分区
+CREATE TABLE audit_logs_2026_04 PARTITION OF audit_logs_partitioned
+    FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
+CREATE TABLE audit_logs_2026_05 PARTITION OF audit_logs_partitioned
+    FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');
+
+-- 归档超过3个月的数据
+-- 1. 导出老分区
+-- pg_dump -t audit_logs_2026_01 ai_novel_agent | gzip > /opt/ai-novel-agent/data/backups/audit_logs_2026_01.sql.gz
+-- 2. 删除老分区
+-- ALTER TABLE audit_logs_partitioned DETACH PARTITION audit_logs_2026_01;
+-- DROP TABLE audit_logs_2026_01;
+```
+
+### 6.4 WAL 清理策略
+
+```sql
+-- WAL 大小由以下参数控制
+max_wal_size = 256MB    -- 触发 checkpoint 的 WAL 上限
+min_wal_size = 64MB     -- 回收 WAL 后保留的最小值
+checkpoint_timeout = 10min
+
+-- 查看当前 WAL 占用
+SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir();
+```
+
+### 6.5 自动清理 cron 脚本
+
+```bash
+#!/bin/bash
+# /opt/ai-novel-agent/scripts/db_maintenance.sh
+# 每天凌晨 3:00 执行：crontab -e → 0 3 * * * /opt/ai-novel-agent/scripts/db_maintenance.sh
+
+set -e
+DB_NAME="ai_novel_agent"
+LOG_FILE="/opt/ai-novel-agent/logs/db_maintenance.log"
+BACKUP_DIR="/opt/ai-novel-agent/data/backups"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') === 开始数据库维护 ===" >> "$LOG_FILE"
+
+# 1. 清理过期幂等键（保留7天）
+psql -d "$DB_NAME" -c "DELETE FROM idempotent_keys WHERE created_at < NOW() - INTERVAL '7 days';" >> "$LOG_FILE" 2>&1
+
+# 2. 清理过期缓存条目
+psql -d "$DB_NAME" -c "DELETE FROM cache_entries WHERE expires_at < NOW();" >> "$LOG_FILE" 2>&1
+
+# 3. 清理已完成超过7天的任务记录
+psql -d "$DB_NAME" -c "DELETE FROM task_queue WHERE status IN ('completed', 'failed') AND completed_at < NOW() - INTERVAL '7 days';" >> "$LOG_FILE" 2>&1
+
+# 4. 清理超过90天的审计日志（如未使用分区表）
+psql -d "$DB_NAME" -c "DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '90 days';" >> "$LOG_FILE" 2>&1
+
+# 5. 清理超过30天的监控数据
+psql -d "$DB_NAME" -c "DELETE FROM system_monitoring WHERE recorded_at < NOW() - INTERVAL '30 days';" >> "$LOG_FILE" 2>&1
+
+# 6. 清理超过60天的生成日志
+psql -d "$DB_NAME" -c "DELETE FROM novel_generation_logs WHERE created_at < NOW() - INTERVAL '60 days';" >> "$LOG_FILE" 2>&1
+psql -d "$DB_NAME" -c "DELETE FROM video_generation_logs WHERE created_at < NOW() - INTERVAL '60 days';" >> "$LOG_FILE" 2>&1
+
+# 7. 清理超过30天的通知
+psql -d "$DB_NAME" -c "DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '30 days';" >> "$LOG_FILE" 2>&1
+
+# 8. 清理临时文件目录
+find /opt/ai-novel-agent/data/temp/ -type f -mtime +1 -delete 2>> "$LOG_FILE"
+
+# 9. VACUUM ANALYZE（回收空间并更新统计信息）
+psql -d "$DB_NAME" -c "VACUUM ANALYZE;" >> "$LOG_FILE" 2>&1
+
+# 10. 显示当前数据库大小
+psql -d "$DB_NAME" -c "SELECT pg_size_pretty(pg_database_size('$DB_NAME')) AS db_size;" >> "$LOG_FILE" 2>&1
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') === 数据库维护完成 ===" >> "$LOG_FILE"
+```
+
+---
+
+## 7. 文件存储目录结构
+
+> 使用本地文件系统替代 MinIO/S3 对象存储，适合单机部署场景。
+
+### 7.1 目录结构
+
+```
+/opt/ai-novel-agent/data/
+├── novels/           # 小说文件 (markdown/json)
+├── videos/           # 视频文件 (mp4)
+├── audio/            # 音频文件 (mp3)
+├── covers/           # 封面图片
+├── exports/          # 导出文件 (epub/pdf)
+├── temp/             # 临时文件 (定期清理)
+└── backups/          # 数据库备份 (仅保留最近3份)
+```
+
+### 7.2 文件命名规范
+
+```
+文件路径格式：{类型}/{用户ID前2位}/{用户ID}/{文件ID}.{扩展名}
+
+示例：
+novels/ab/abcd1234-.../novel-uuid.json
+videos/ab/abcd1234-.../video-uuid.mp4
+covers/ab/abcd1234-.../cover-uuid.jpg
+
+优点：
+- 按用户ID分散目录，避免单目录文件过多
+- 文件ID全局唯一，防止冲突
+- 目录层级固定，方便定位和清理
+```
+
+### 7.3 磁盘空间监控
+
+```bash
+# 查看各目录占用
+du -sh /opt/ai-novel-agent/data/*/
+
+# 告警：磁盘使用超过80%时通知
+DISK_USAGE=$(df /opt/ai-novel-agent/data | tail -1 | awk '{print $5}' | sed 's/%//')
+if [ "$DISK_USAGE" -gt 80 ]; then
+    echo "磁盘使用率告警: ${DISK_USAGE}%" >> /opt/ai-novel-agent/logs/disk_alert.log
+fi
+```
+
+---
+
+## 8. 数据迁移策略
+
+### 8.1 从单库到商业化架构的迁移路径
+
+```
+部署环境：1GB 内存 VPS，裸机部署（systemd 管理服务）
+数据库：单机 PostgreSQL 15，无需 Docker
+
 阶段一：表结构扩展（低风险）
 ├── 1. 新增套餐/订阅/权益相关表
 ├── 2. 新增退款/对账表
 ├── 3. 新增内容广场相关表
 ├── 4. 新增通知/审计表
-└── 5. 新增多端渠道表
+├── 5. 新增多端渠道表
+└── 6. 新增基础设施表（task_queue/idempotent_keys/cache_entries）
 
 阶段二：数据迁移（中风险）
 ├── 1. 现有用户补充默认免费套餐订阅记录
@@ -2113,14 +2541,14 @@ DEL balance:uuid-xxx
 ├── 3. 已发布内容同步到 public_contents
 └── 4. 现有设备信息迁移到 user_devices
 
-阶段三：读写切换（高风险）
-├── 1. 双写模式：新旧表同时写入
-├── 2. 灰度验证：10% → 50% → 100% 流量切换
-├── 3. 旧表降级为只读
-└── 4. 清理旧表冗余字段
+注意事项：
+- 所有服务通过 systemd 管理，不使用 Docker
+- 资源有限，迁移期间需暂停非关键服务，减少内存/CPU竞争
+- 每次迁移前必须 pg_dump 备份
+- 大表迁移分批进行，避免长事务锁表
 ```
 
-### 5.2 迁移脚本模板
+### 8.2 迁移脚本模板
 
 ```sql
 -- 阶段一：为现有用户创建默认免费订阅
@@ -2157,82 +2585,135 @@ WHERE NOT EXISTS (
 );
 ```
 
-### 5.3 回滚方案
+### 8.3 回滚方案
 
 ```
 每次迁移前：
-1. 完整数据库备份（pg_dump）
+1. pg_dump 完整备份到 /opt/ai-novel-agent/data/backups/
 2. 记录当前 schema 版本号
 3. 准备回滚 SQL 脚本
 
 回滚执行：
-1. 停止应用写入
-2. 执行回滚 SQL
-3. 恢复应用
+1. systemctl stop ai-novel-agent（停止应用）
+2. 执行回滚 SQL 或 pg_restore 恢复
+3. systemctl start ai-novel-agent（恢复应用）
 4. 验证数据完整性
 ```
 
 ---
 
-## 6. 备份与归档策略
+## 9. 备份与归档策略
 
-### 6.1 备份策略
+### 9.1 备份策略（磁盘约束下的方案）
 
 ```
-全量备份：
-- 频率：每日 03:00（低峰期）
-- 方式：pg_dump --format=custom
-- 保留：最近 30 天
-- 存储：本地 + 异地对象存储（S3/MinIO）
+部署约束：20GB 磁盘，无异地存储
+备份大小预估：约 100MB/份（压缩后）
+仅保留最近 3 份备份，总占用约 300MB
 
-增量备份：
-- 频率：每小时
-- 方式：WAL 日志归档
-- 保留：最近 7 天
+每周全量备份（周日 03:00）：
+- 方式：pg_dump --format=custom --compress=9
+- 保留：最近 3 份
+- 存储：/opt/ai-novel-agent/data/backups/
+
+每日 WAL 归档：
+- 方式：archive_command 归档 WAL 段
+- 保留：最近 7 天（约 200MB）
 - 用途：时间点恢复（PITR）
-
-逻辑备份：
-- 频率：每周日 03:00
-- 方式：pg_dump --format=plain
-- 保留：最近 12 周
-- 用途：跨版本迁移、审计
 ```
 
-### 6.2 归档策略
+### 9.2 备份脚本
+
+```bash
+#!/bin/bash
+# /opt/ai-novel-agent/scripts/backup.sh
+# 每周日凌晨 3:30 执行：crontab -e → 30 3 * * 0 /opt/ai-novel-agent/scripts/backup.sh
+
+set -e
+DB_NAME="ai_novel_agent"
+BACKUP_DIR="/opt/ai-novel-agent/data/backups"
+LOG_FILE="/opt/ai-novel-agent/logs/backup.log"
+MAX_BACKUPS=3
+DATE=$(date '+%Y%m%d_%H%M%S')
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') === 开始数据库备份 ===" >> "$LOG_FILE"
+
+# 1. 执行全量备份（压缩）
+pg_dump -Fc -Z 9 -d "$DB_NAME" -f "${BACKUP_DIR}/full_${DATE}.dump" 2>> "$LOG_FILE"
+
+# 2. 显示备份大小
+BACKUP_SIZE=$(du -sh "${BACKUP_DIR}/full_${DATE}.dump" | cut -f1)
+echo "备份完成: full_${DATE}.dump (${BACKUP_SIZE})" >> "$LOG_FILE"
+
+# 3. 删除多余备份（只保留最近3份）
+cd "$BACKUP_DIR"
+ls -t full_*.dump 2>/dev/null | tail -n +$((MAX_BACKUPS + 1)) | xargs -r rm -f
+echo "清理旧备份完成，当前保留 $(ls full_*.dump 2>/dev/null | wc -l) 份" >> "$LOG_FILE"
+
+# 4. 清理超过7天的 WAL 归档
+find "${BACKUP_DIR}/wal/" -type f -mtime +7 -delete 2>> "$LOG_FILE"
+
+# 5. 显示备份目录总大小
+TOTAL_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
+echo "备份目录总大小: ${TOTAL_SIZE}" >> "$LOG_FILE"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') === 数据库备份完成 ===" >> "$LOG_FILE"
+```
+
+### 9.3 WAL 归档配置
+
+```sql
+-- postgresql.conf WAL 归档配置
+archive_mode = on
+archive_command = 'cp %p /opt/ai-novel-agent/data/backups/wal/%f'
+archive_timeout = 300   -- 5分钟强制归档（即使WAL未写满）
+```
+
+### 9.4 恢复流程
+
+```bash
+# 1. 停止服务
+sudo systemctl stop ai-novel-agent
+sudo systemctl stop postgresql
+
+# 2. 恢复全量备份
+pg_restore -d ai_novel_agent -c /opt/ai-novel-agent/data/backups/full_YYYYMMDD.dump
+
+# 3. 如需时间点恢复（PITR）
+# 配置 recovery.conf 或 postgresql.conf
+# restore_command = 'cp /opt/ai-novel-agent/data/backups/wal/%f %p'
+# recovery_target_time = '2026-04-01 12:00:00'
+
+# 4. 重启服务
+sudo systemctl start postgresql
+sudo systemctl start ai-novel-agent
+```
+
+### 9.5 数据保留与归档策略
 
 ```
-冷数据归档规则：
-1. audit_logs：超过 90 天的记录迁移到归档表/外部存储
-2. system_monitoring：超过 30 天的记录按月压缩归档
-3. novel_generation_logs / video_generation_logs：超过 60 天归档
-4. content_interactions：已删除内容的互动记录 30 天后清除
+磁盘约束下的数据保留规则：
+- 用户/订单/小说/视频核心数据：在线永久保留
+- audit_logs：在线保留 90 天，导出压缩后删除
+- system_monitoring：在线保留 30 天，直接删除
+- generation_logs：在线保留 60 天，直接删除
+- notifications：在线保留 30 天，直接删除
+- task_queue 已完成任务：保留 7 天
+- idempotent_keys：保留 7 天
+- cache_entries：自动过期清理
+- temp 目录：保留 1 天
 
 归档实现：
-- 使用 PostgreSQL 表分区 + 分区拆卸（DETACH PARTITION）
-- 冷数据导出为 Parquet 格式存入对象存储
-- 保留归档索引表用于历史查询
-
-示例（审计日志月度归档）：
-ALTER TABLE audit_logs DETACH PARTITION audit_logs_2026_01;
--- 导出为 Parquet 后删除分区表
+- 使用 db_maintenance.sh 脚本定期清理（见 6.5 节）
+- 重要数据（audit_logs）导出为 gzip 压缩 SQL 后删除
+- 不使用对象存储，所有归档文件保存在本地 backups 目录
 ```
-
-### 6.3 数据保留策略
-
-| 数据类型 | 热数据（在线） | 温数据（近线） | 冷数据（归档） |
-|----------|---------------|---------------|---------------|
-| 用户数据 | 永久 | - | 注销后 180 天 |
-| 订单/支付 | 2 年 | 2-5 年 | 5 年+ |
-| 小说/视频 | 永久 | - | 用户删除后 30 天 |
-| 审计日志 | 90 天 | 90天-1年 | 1-5 年 |
-| 监控数据 | 30 天 | 30-90 天 | 90 天后丢弃 |
-| 通知 | 30 天 | 30-90 天 | 90 天后丢弃 |
 
 ---
 
-## 7. 索引优化说明
+## 10. 索引优化说明
 
-### 7.1 索引设计原则
+### 10.1 索引设计原则
 
 ```
 1. 覆盖索引优先：高频查询字段组合建立复合索引
@@ -2242,7 +2723,7 @@ ALTER TABLE audit_logs DETACH PARTITION audit_logs_2026_01;
 5. 避免过度索引：每张表索引数不超过 8 个
 ```
 
-### 7.2 核心查询索引优化
+### 10.2 核心查询索引优化
 
 ```sql
 -- 高频查询 1：用户查看自己的小说列表（按创建时间倒序）
@@ -2276,7 +2757,7 @@ CREATE INDEX idx_advices_genre_active ON expert_advices USING gin(genre_tags)
 CREATE INDEX idx_reconciliation_daily ON reconciliation_records(reconciliation_date DESC, gateway);
 ```
 
-### 7.3 慢查询监控与索引维护
+### 10.3 慢查询监控与索引维护
 
 ```sql
 -- 开启慢查询日志
@@ -2305,7 +2786,7 @@ ORDER BY pg_relation_size(indexname::regclass) DESC;
 -- VACUUM ANALYZE videos;
 ```
 
-### 7.4 分区表索引策略
+### 10.4 分区表索引策略
 
 ```
 分区表索引注意事项：
@@ -2322,7 +2803,7 @@ ORDER BY pg_relation_size(indexname::regclass) DESC;
 
 ---
 
-## 8. ER 关系总览
+## 11. ER 关系总览
 
 ```
 users ─┬── user_sessions
@@ -2350,11 +2831,22 @@ users ─┬── user_sessions
        ├── channel_users
        └── reconciliation_records（独立，按日期+网关维度）
 
+基础设施表（独立，无外键关联）：
+├── task_queue          -- 任务队列（替代 RabbitMQ）
+├── idempotent_keys     -- 幂等键（替代 Redis SETNX）
+└── cache_entries       -- 持久化缓存（替代 Redis 缓存）
+
 system_monitoring（独立，系统级监控）
+
+文件存储（本地文件系统）：
+/opt/ai-novel-agent/data/
+├── novels/    videos/    audio/
+├── covers/    exports/   temp/
+└── backups/
 ```
 
 ---
 
-> **文档版本**: v1.0
+> **文档版本**: v2.0（单机优化版：移除Redis/MinIO/Docker，适配1GB内存+20GB磁盘VPS）
 > **最后更新**: 2026-04-01
 > **设计状态**: 🗄️ 完成

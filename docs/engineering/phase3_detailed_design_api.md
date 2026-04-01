@@ -7,6 +7,15 @@
 - **工程方法**: OpenClaw软件工程化全流程
 - **设计状态**: 📝 进行中
 
+## 服务器环境约束
+- 服务器：104.244.90.202 (Ubuntu 24.04 裸机)
+- CPU：2核 / 内存：1GB / 磁盘：20GB
+- 架构：模块化单体(Modular Monolith) - 单FastAPI进程
+- 数据库：PostgreSQL 16 (唯一持久化存储)
+- 缓存：进程内缓存(cachetools.TTLCache)，无Redis
+- 任务队列：PostgreSQL任务表 + Celery(database backend)
+- 部署：systemd服务，非Docker
+
 ## 1. API设计原则
 
 ### 1.1 设计规范

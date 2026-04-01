@@ -190,21 +190,35 @@
    - 技术方案明确
    - 可复用组件多
 
-3. 服务器资源：
-   - 服务器：104.244.90.202
-   - 现有服务：端口9000
-   - 可用资源：可扩展
+3. 服务器资源（实际硬件）：
+   - 服务器：104.244.90.202 (Ubuntu 24.04 裸机)
+   - CPU：2核
+   - 内存：1GB（可用约476MB，重度依赖4.5GB swap）
+   - 磁盘：20GB（已用95%，仅剩约1GB）
+   - 部署方式：systemd服务（非Docker）
+   - 现有服务：ai-novel-agent(:9000)、media-agent(:9090)、PostgreSQL 16
+   - ⚠️ 资源极度受限，不支持微服务/Docker/Redis/RabbitMQ等重型组件
 ```
 
 ### 3.2 技术挑战评估
 ```
 🔴 高风险挑战：
-1. 视频处理性能
-   - 挑战：视频生成计算密集
-   - 解决方案：GPU加速，分布式处理
-   - 资源需求：高
+1. 磁盘空间危急（95%已用）
+   - 挑战：仅剩~1GB可用空间，无法存储大量小说/视频文件
+   - 解决方案：自动清理策略(FIFO)、数据压缩、定期VACUUM、WAL控制
+   - 资源需求：需持续监控，空间<500MB时拒绝新任务
 
-2. 多平台API集成
+2. 内存极度受限（1GB）
+   - 挑战：OS+PostgreSQL+FastAPI+Celery需共享1GB内存
+   - 解决方案：单worker进程、小连接池、进程内缓存、swap辅助
+   - 内存预算：PostgreSQL 128MB + FastAPI 200MB + Celery 150MB + OS 200MB
+
+3. 视频处理性能
+   - 挑战：视频生成计算密集，2核CPU极度受限
+   - 解决方案：串行处理（一次一个任务）、降低分辨率、外部API辅助
+   - ⚠️ 无GPU，不支持分布式处理
+
+4. 多平台API集成
    - 挑战：平台API频繁变更
    - 解决方案：抽象适配层，定期更新
    - 维护成本：中高
@@ -234,24 +248,43 @@
 
 ### 3.3 技术选型建议
 ```
-✅ 推荐技术栈：
+✅ 推荐技术栈（适配1GB内存/20GB磁盘裸机环境）：
 1. 后端框架：FastAPI (Python)
    - 理由：异步支持好，性能优秀，文档自动生成
+   - 约束：单worker进程，内存限制200MB
 
-2. 数据库：PostgreSQL + Redis
-   - 理由：PostgreSQL功能丰富，Redis缓存性能好
+2. 数据库：PostgreSQL 16（唯一持久化存储）
+   - 理由：功能丰富，可靠性高
+   - 约束：shared_buffers=128MB，max_connections=20
+   - ⚠️ 不使用Redis：1GB内存无法承担额外内存数据库
+   - 替代缓存方案：进程内缓存(cachetools.TTLCache)
 
-3. 消息队列：Celery + RabbitMQ
-   - 理由：Celery适合Python，RabbitMQ成熟稳定
+3. 任务队列：Celery + PostgreSQL backend 或 FastAPI BackgroundTasks
+   - 理由：轻量级，无需额外MQ组件
+   - ⚠️ 不使用RabbitMQ：内存不足以运行独立MQ服务
+   - 替代方案：PostgreSQL task_queue表 + 轮询消费
 
-4. 前端框架：React + TypeScript
-   - 理由：生态丰富，类型安全，性能优秀
+4. 前端框架：原生HTML/CSS/JS（轻量级）
+   - 理由：无需构建工具，直接部署，节省磁盘
+   - 可后续升级为React
 
-5. 部署方案：Docker + Docker Compose
-   - 理由：简单易用，适合中小规模部署
+5. 部署方案：裸机 + systemd服务管理
+   - 理由：零额外开销，直接利用系统资源
+   - ⚠️ 不使用Docker：20GB磁盘无空间容纳Docker镜像和层
+   - 服务管理：systemd unit files
 
-6. 监控方案：Prometheus + Grafana
-   - 理由：开源免费，功能强大，社区活跃
+6. 监控方案：/health端点 + systemd journal + logrotate
+   - 理由：零额外资源占用
+   - ⚠️ 不使用Prometheus/Grafana/Loki：内存和磁盘不足
+   - 替代：Python脚本定期检查磁盘/内存并告警
+
+7. 文件存储：本地文件系统
+   - ⚠️ 不使用MinIO/S3：磁盘空间不足
+   - 策略：自动清理7天前的任务输出，FIFO淘汰
+
+8. 架构风格：模块化单体（Modular Monolith）
+   - ⚠️ 不采用微服务：2核1GB无法运行多个独立服务
+   - 所有业务模块在单FastAPI进程中运行
 ```
 
 ## 4. 功能优先级排序
