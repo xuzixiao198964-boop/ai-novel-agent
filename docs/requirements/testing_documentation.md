@@ -2,7 +2,7 @@
 
 ## 文档概述
 
-本文档基于需求文档、概要设计文档和详细设计文档，定义AI小说生成Agent系统的完整测试策略。包括单元测试（精细到接口级别）、集成测试、性能测试和部署测试。
+本文档基于需求文档、概要设计文档和详细设计文档，定义 AI 小说生成 Agent 系统的完整测试策略。包括单元测试（精细到接口级别）、集成测试、性能测试（含 **104 裸机对齐档**）、**系统测试要点**（与 `docs/TESTING.md` 呼应）及 **systemd 裸机** 部署相关验证思路（非 Docker）。
 
 ## 0. 测试环境约束说明
 
@@ -28,6 +28,30 @@
 6. **无Docker测试**：集成测试直接在裸机环境运行，使用systemd管理服务
 7. **无RabbitMQ测试**：消息队列相关测试使用PostgreSQL task_queue表
 
+### 0.1 单元测试替身与数据策略（对齐架构）
+
+编写与执行单元测试时，**不得依赖** Redis、RabbitMQ、Docker、MinIO、独立 MQ 等组件，替身与数据来源约定如下：
+
+| 能力 | 生产实现 | 单元测试替身 |
+|------|----------|--------------|
+| 会话/热点缓存 | `cachetools.TTLCache` 或 PostgreSQL `cache_entries` | `unittest.mock` 或内存 `TTLCache(maxsize=10)` |
+| 支付回调幂等 | `idempotent_keys` 表 `INSERT … ON CONFLICT DO NOTHING` | 测试库真实表或 `sqlite` + 同 schema |
+| 分布式锁/并发订阅 | `pg_advisory_lock` 或行级锁 | `pytest` fixture 串行化或 mock `lock.acquire` |
+| 异步任务 | `task_queue` 表 + Worker 轮询 | 直接调用处理函数，或 mock `enqueue` |
+| 限流 | SlowAPI + 进程内计数器 | mock 时间窗口或调高超限阈值 |
+| 文件/媒体 | `/opt/ai-novel-agent/data/` | `tmp_path` / `pytest` 临时目录 |
+| 向量/相似检索 | `pg_trgm` | 测试库启用扩展或 mock `similarity()` |
+
+**执行原则**：商业化模块（§2.5–§2.12）的用例一律在 **临时目录 + 测试数据库（或事务回滚）** 中运行；不得在 104 生产盘写入大文件。
+
+### 0.2 测试环境分级
+
+| 级别 | 用途 | 资源假设 | 并发/内存断言 |
+|------|------|----------|----------------|
+| **A：本地/CI** | 单元测试、大部分集成测试 | 开发者机或 GitHub Runner（充裕） | 可按模块放宽，但仍不启动 Redis |
+| **B：104 对齐（系统测试）** | 验收、冒烟、关键 E2E | 2 核 / 1GB / 20GB 磁盘 | 并发 ≤2；单进程 RSS 峰值 ≤300MB（主服务） |
+| **C：性能回归（可选）** | 基准对比 | 建议在 ≥4GB 内存的专用机执行 | 文档中 104 档指标与「扩展档」分开写明 |
+
 ---
 
 ## 1. 测试策略与范围
@@ -43,9 +67,10 @@
 | 测试类型 | 覆盖范围 | 测试重点 | 验收标准 |
 |---------|---------|---------|---------|
 | 单元测试 | 所有模块接口 | 接口契约、边界条件、异常处理 | 代码覆盖率≥85% |
-| 集成测试 | Agent间协作 | 数据流、状态转换、错误传播 | 端到端流程100%通过 |
-| 性能测试 | 关键路径 | 响应时间、资源使用、并发能力 | 满足性能需求指标 |
-| 部署测试 | 生产环境 | 安装、配置、监控、备份 | 一键部署成功 |
+| 集成测试 | Agent间协作、DB 任务表 | 数据流、状态转换、错误传播 | 端到端流程100%通过（Mock LLM 时可 CI） |
+| 性能测试 | 关键路径 | 响应时间、资源使用、**104 档**并发≤2、内存上限 | A 档可放宽；B 档须满足 §6.2 `production_104` |
+| 系统测试 | 裸机验收 | systemd、健康检查、磁盘/内存门禁、TC-C 类用例 | 发版前在目标机或等价环境通过 |
+| 部署测试 | 生产环境 | **systemd** 单元、配置、日志轮转、备份 | 服务 `active`、回滚脚本可用（非 Docker 一键） |
 
 ### 1.3 测试环境
 ```yaml
@@ -56,14 +81,20 @@
     - 数据: 模拟数据、测试数据库
   
   集成环境:
-    - 位置: 测试服务器
-    - 用途: 集成测试、性能测试
-    - 数据: 真实数据、完整数据库
+    - 位置: 测试服务器或 CI Runner
+    - 用途: 集成测试、带 PostgreSQL 的流水线测试
+    - 数据: 独立测试库；任务队列为表驱动，无 RabbitMQ
+  
+  生产/验收环境(104对齐):
+    - 位置: 104.244.90.202（裸机 systemd）
+    - 用途: 系统测试、冒烟、关键 E2E（参见 docs/TESTING.md TC-C*）
+    - 约束: 发任务前检查磁盘剩余>500MB；并发业务任务≤2
+    - 监控: journalctl + /health，无 Prometheus 栈
   
   生产环境:
-    - 位置: 104.244.90.202:9000
-    - 用途: 部署验证、监控测试
-    - 数据: 生产数据备份
+    - 位置: 104.244.90.202:9000（主 API）
+    - 用途: 部署验证、抽样回归
+    - 数据: 生产数据备份；测试须避开高峰或只读账号
 ```
 
 ## 2. 单元测试设计（接口级别）
@@ -2131,6 +2162,8 @@ class TestConfidenceCalculatorInterface:
             level = confidence_calculator._determine_confidence_level(score)
             assert level == expected_level
 ```
+
+> **§2.5–§2.12 说明**：以下商业化相关单元测试均按 **§0.1** 替身策略编写——幂等与队列表用 PostgreSQL（或测试等价物），**禁止**在用例中 `import redis`、连接 RabbitMQ 或假设 Docker 网络别名。
 
 ### 2.5 套餐订阅服务单元测试
 
@@ -4832,7 +4865,25 @@ class TestErrorRecoveryIntegration:
         }
 ```
 
+### 3.4 集成测试与系统测试的边界
+
+| 类型 | 典型载体 | 依赖 |
+|------|----------|------|
+| **集成测试**（§3.1–§3.3） | `pytest` + Mock LLM / 测试库 | PostgreSQL（或项目约定的测试 DB）；**无** Docker 编排、**无** Redis |
+| **系统测试**（§6.3、`docs/TESTING.md`） | 手工或脚本 + 真实 systemd 进程 | 104 或等价裸机；TC-S01/S02、TC-C01–C12 |
+
+集成测试**不替代**发版前的系统测试：后者验证磁盘门禁、内存、journal 与真实支付沙箱回调路径。
+
+---
+
 ## 4. 性能测试设计
+
+### 4.0 环境与指标分级
+
+- **104 对齐档（B）**：在目标机或限制 cgroup 的 Runner 上执行；`max_concurrent_tasks ≤ 2`；单测进程峰值内存建议断言 **≤300MB**；磁盘写入使用临时目录并在用例 `teardown` 删除。
+- **扩展档（A）**：用于开发机/CI 基准对比，可保留较高并发与较宽内存阈值，但 **CI 仍不启动 Redis**，与架构一致。
+
+以下代码示例中，`test_concurrent_batch_performance` 的 **104 对齐断言** 以注释形式标注；默认示例改为「最多 2 个并发 pipeline」，与架构文档一致。
 
 ### 4.1 批次性能基准测试
 
@@ -4943,8 +4994,9 @@ class TestBatchPerformance:
             stability = std_batch_time / avg_batch_time
             assert stability < 0.5, f"批次时间不稳定: {stability:.2%}"
         
-        # 内存要求：批次间内存增长不超过100MB
+        # 内存要求：104 对齐档建议批次间内存增长不超过 80MB（1GB 机器更严）
         assert max_memory < 100, f"内存增长过高: {max_memory:.2f}MB"
+        # 若在 104 上实测，可改为 assert max_memory < 80
         
         return {
             "batch_count": len(batch_times),
@@ -4960,16 +5012,16 @@ class TestBatchPerformance:
     @pytest.mark.timeout(300)  # 5分钟超时
     @pytest.mark.asyncio
     async def test_concurrent_batch_performance(self):
-        """测试并发批次性能"""
+        """测试并发批次性能（104 对齐：最多 2 路并发）"""
         from app.core.pipeline import PipelineController
         
-        # 配置
+        # 配置：与生产 104 环境一致——并发≤2，避免 OOM
         config = {
-            "max_concurrent_tasks": 3,
+            "max_concurrent_tasks": 2,
             "agents": {
                 "writer": {
                     "batch_size": 3,
-                    "max_workers": 3
+                    "max_workers": 2
                 }
             }
         }
@@ -4980,7 +5032,8 @@ class TestBatchPerformance:
         tasks = []
         start_time = time.time()
         
-        for i in range(5):  # 5个并发任务
+        concurrent_n = 2  # 104 策略：禁止 5 路并发；扩展档可改为 5 并单独 job
+        for i in range(concurrent_n):
             task = asyncio.create_task(
                 controller.execute_pipeline(
                     task_id=f"concurrent_perf_{i}",
@@ -5020,8 +5073,8 @@ class TestBatchPerformance:
         print(f"  平均任务时间: {avg_task_time:.2f}秒")
         print(f"  吞吐量: {throughput:.3f} 任务/秒")
         
-        # 性能断言
-        assert successful >= 3, "应该至少成功3个任务"
+        # 性能断言（2 个任务时应全部成功）
+        assert successful >= concurrent_n - 1, f"并发任务成功数不足: {successful}/{concurrent_n}"
         assert failed == 0, "不应该有任务失败"
         
         # 并发效率：5个任务应该在合理时间内完成
@@ -5331,16 +5384,20 @@ jobs:
     runs-on: ubuntu-latest
     
     services:
-      # 如果需要数据库或其他服务
-      redis:
-        image: redis
+      # 与生产一致：仅 PostgreSQL，不启动 Redis / RabbitMQ（架构约束）
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: ai_novel_test
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "pg_isready -U test -d ai_novel_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          - 6379:6379
+          - 5432:5432
     
     strategy:
       matrix:
@@ -5370,6 +5427,7 @@ jobs:
           --junitxml=test-results/unit.xml
       env:
         PYTHONPATH: ${{ github.workspace }}/backend
+        DATABASE_URL: postgresql://test:test@localhost:5432/ai_novel_test
     
     - name: 运行集成测试
       run: |
@@ -5378,6 +5436,7 @@ jobs:
           --junitxml=test-results/integration.xml
       env:
         PYTHONPATH: ${{ github.workspace }}/backend
+        DATABASE_URL: postgresql://test:test@localhost:5432/ai_novel_test
         TEST_MODE: "true"
         MOCK_LLM: "true"
     
@@ -5388,6 +5447,7 @@ jobs:
           --junitxml=test-results/performance.xml
       env:
         PYTHONPATH: ${{ github.workspace }}/backend
+        DATABASE_URL: postgresql://test:test@localhost:5432/ai_novel_test
         TEST_MODE: "true"
         MOCK_LLM: "true"
     
@@ -5458,25 +5518,52 @@ fail_under = 85
       "3_chapter_batch": {
         "target_time_seconds": 390,
         "acceptable_range": "300-480",
-        "memory_limit_mb": 650,
+        "memory_limit_mb_ci": 650,
+        "memory_limit_mb_production_104": 300,
         "cpu_usage_percent": 80
       }
     },
     "concurrent_tasks": {
-      "3_concurrent": {
-        "throughput_tasks_per_hour": 20,
-        "response_time_seconds": 180,
+      "2_concurrent_104": {
+        "description": "104 裸机 1GB 内存策略",
+        "max_parallel_pipelines": 2,
+        "throughput_tasks_per_hour": 8,
+        "response_time_seconds": 300,
         "error_rate_percent": 5
+      },
+      "extended_ci": {
+        "description": "扩展档（非 104 验收）",
+        "max_parallel_pipelines": 5,
+        "memory_limit_mb": 650
       }
     },
     "memory_usage": {
-      "peak_memory_mb": 650,
-      "average_memory_mb": 450,
-      "memory_leak_per_hour_mb": 50
+      "peak_memory_mb_production_104": 300,
+      "peak_memory_mb_ci": 650,
+      "average_memory_mb_104": 200,
+      "memory_leak_per_hour_mb": 20
     }
   }
 }
 ```
+
+### 6.3 系统测试设计（裸机验收，与 `docs/TESTING.md` 对齐）
+
+**定义**：系统测试在**目标运行形态**下验证完整行为——**模块化单体** + **systemd** + **PostgreSQL** + 本地数据目录，不依赖 Docker、Redis、RabbitMQ。
+
+| 类别 | 内容 | 参考 |
+|------|------|------|
+| 部署形态 | `systemctl status ai-novel-agent`（及可选 worker）为 `active` | 运维 runbook |
+| 健康检查 | `GET /api/health` 或 `/health` 返回 DB 可达；含磁盘/内存字段时符合 TC-C11/C12 | TESTING.md |
+| 业务 E2E | TC-C01–TC-C10（注册、支付、OpenClaw、多端、视频、发布、幂等、广场、对账） | TESTING.md |
+| 资源门禁 | TC-C11 磁盘、TC-C12 内存 | TESTING.md |
+| 冒烟 | TC-S01–TC-S02（systemd + journal） | TESTING.md |
+
+**执行顺序建议**：先 **TC-S*** 环境与资源门禁 → 再 **TC-C08**（幂等）→ **TC-C01/C02** → 其余按优先级。
+
+**数据与清理**：系统测试在 104 上执行须使用**测试账号**；任务输出写入可清理路径；执行后运行归档/删除脚本，避免占满 95% 磁盘。
+
+**与单元/集成测试分工**：单元测试（§2）验证模块与表逻辑；集成测试（§3）验证 Agent 流水线与 DB；系统测试验证**真实进程、真实 systemd、真实磁盘约束**下的验收标准。
 
 ## 7. 总结
 
@@ -5501,9 +5588,10 @@ fail_under = 85
 4. **错误处理**：所有错误类型都有恢复策略
 
 ### 7.4 自动化执行
-1. **本地测试脚本**：一键执行完整测试套件
-2. **持续集成**：GitHub Actions自动测试
+1. **本地测试脚本**：一键执行完整测试套件（不拉起 Redis）
+2. **持续集成**：GitHub Actions 使用 **PostgreSQL 16** 服务容器，与生产存储栈一致
 3. **测试报告**：自动生成详细测试报告
-4. **质量门禁**：代码覆盖率、性能基准检查
+4. **质量门禁**：代码覆盖率、性能基准检查（区分 **104 档** 与 **扩展档**）
+5. **系统测试**：发版前在 104 或等价环境执行 `docs/TESTING.md` 中 TC-S*、TC-C*（§6.3）
 
-本测试文档确保系统按照需求文档和设计文档的要求，实现高质量、高性能、高可靠的AI小说生成Agent系统。
+本测试文档确保系统在 **104 裸机资源约束** 与模块化单体架构下，仍能满足需求与设计中的质量与验收标准。
