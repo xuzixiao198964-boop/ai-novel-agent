@@ -2106,6 +2106,1907 @@ class TestConfidenceCalculatorInterface:
             assert level == expected_level
 ```
 
+### 2.5 套餐订阅服务单元测试
+
+#### 2.5.1 test_create_subscription - 创建订阅
+```python
+# tests/unit/test_subscription_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+from datetime import datetime, timedelta
+
+from app.services.subscription import SubscriptionService, PlanType, SubscriptionStatus
+
+
+class TestCreateSubscription:
+    """创建订阅接口测试"""
+
+    @pytest.fixture
+    def subscription_service(self, db_session):
+        return SubscriptionService(db=db_session)
+
+    @pytest.fixture
+    def mock_user(self):
+        return {"user_id": "user_001", "phone": "13800138000"}
+
+    @pytest.mark.asyncio
+    async def test_create_subscription_basic(self, subscription_service, mock_user):
+        """测试基础套餐订阅创建"""
+        # Setup: 用户无历史订阅
+        # Input
+        result = await subscription_service.create_subscription(
+            user_id=mock_user["user_id"],
+            plan_type=PlanType.BASIC,
+            duration_months=1
+        )
+        # Expected Output
+        assert result["status"] == SubscriptionStatus.ACTIVE
+        assert result["plan_type"] == PlanType.BASIC
+        assert result["user_id"] == mock_user["user_id"]
+        assert result["start_time"] <= datetime.utcnow()
+        assert result["end_time"] > datetime.utcnow()
+        assert "subscription_id" in result
+        # Teardown: db_session自动回滚
+
+    @pytest.mark.asyncio
+    async def test_create_subscription_duplicate_rejected(self, subscription_service, mock_user):
+        """测试重复订阅被拒绝"""
+        await subscription_service.create_subscription(
+            user_id=mock_user["user_id"],
+            plan_type=PlanType.BASIC,
+            duration_months=1
+        )
+        with pytest.raises(ValueError, match="已有活跃订阅"):
+            await subscription_service.create_subscription(
+                user_id=mock_user["user_id"],
+                plan_type=PlanType.BASIC,
+                duration_months=1
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_subscription_all_plan_types(self, subscription_service, mock_user):
+        """测试所有套餐类型均可创建"""
+        for plan in [PlanType.FREE, PlanType.BASIC, PlanType.PRO, PlanType.ENTERPRISE]:
+            result = await subscription_service.create_subscription(
+                user_id=f"user_{plan.value}",
+                plan_type=plan,
+                duration_months=1
+            )
+            assert result["plan_type"] == plan
+```
+
+#### 2.5.2 test_upgrade_subscription - 升级套餐
+```python
+class TestUpgradeSubscription:
+    """升级套餐接口测试"""
+
+    @pytest.fixture
+    def subscription_service(self, db_session):
+        return SubscriptionService(db=db_session)
+
+    @pytest.fixture
+    async def active_basic_sub(self, subscription_service):
+        """Setup: 创建一个基础套餐活跃订阅"""
+        return await subscription_service.create_subscription(
+            user_id="user_upgrade_001",
+            plan_type=PlanType.BASIC,
+            duration_months=1
+        )
+
+    @pytest.mark.asyncio
+    async def test_upgrade_basic_to_pro(self, subscription_service, active_basic_sub):
+        """测试从基础套餐升级到专业套餐"""
+        # Input
+        result = await subscription_service.upgrade_subscription(
+            subscription_id=active_basic_sub["subscription_id"],
+            target_plan=PlanType.PRO
+        )
+        # Expected Output
+        assert result["plan_type"] == PlanType.PRO
+        assert result["status"] == SubscriptionStatus.ACTIVE
+        assert result["upgrade_from"] == PlanType.BASIC
+        assert result["price_diff"] > 0  # 补差价
+
+    @pytest.mark.asyncio
+    async def test_upgrade_to_same_plan_rejected(self, subscription_service, active_basic_sub):
+        """测试升级到相同套餐被拒绝"""
+        with pytest.raises(ValueError, match="不能升级到相同套餐"):
+            await subscription_service.upgrade_subscription(
+                subscription_id=active_basic_sub["subscription_id"],
+                target_plan=PlanType.BASIC
+            )
+
+    @pytest.mark.asyncio
+    async def test_upgrade_prorates_remaining(self, subscription_service, active_basic_sub):
+        """测试升级时按比例折算剩余时长"""
+        result = await subscription_service.upgrade_subscription(
+            subscription_id=active_basic_sub["subscription_id"],
+            target_plan=PlanType.PRO
+        )
+        assert "prorated_credit" in result
+        assert result["prorated_credit"] >= 0
+```
+
+#### 2.5.3 test_downgrade_subscription - 降级套餐
+```python
+class TestDowngradeSubscription:
+    """降级套餐接口测试"""
+
+    @pytest.fixture
+    async def active_pro_sub(self, subscription_service):
+        return await subscription_service.create_subscription(
+            user_id="user_downgrade_001",
+            plan_type=PlanType.PRO,
+            duration_months=1
+        )
+
+    @pytest.mark.asyncio
+    async def test_downgrade_pro_to_basic(self, subscription_service, active_pro_sub):
+        """测试从专业套餐降级到基础套餐（下个周期生效）"""
+        # Input
+        result = await subscription_service.downgrade_subscription(
+            subscription_id=active_pro_sub["subscription_id"],
+            target_plan=PlanType.BASIC
+        )
+        # Expected Output: 降级在当前周期结束后生效
+        assert result["current_plan"] == PlanType.PRO
+        assert result["pending_plan"] == PlanType.BASIC
+        assert result["effective_date"] >= active_pro_sub["end_time"]
+
+    @pytest.mark.asyncio
+    async def test_downgrade_to_higher_plan_rejected(self, subscription_service, active_pro_sub):
+        """测试降级到更高套餐被拒绝"""
+        with pytest.raises(ValueError, match="目标套餐等级不低于当前"):
+            await subscription_service.downgrade_subscription(
+                subscription_id=active_pro_sub["subscription_id"],
+                target_plan=PlanType.ENTERPRISE
+            )
+```
+
+#### 2.5.4 test_check_entitlement - 权益检查
+```python
+class TestCheckEntitlement:
+    """权益检查接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_basic_plan_entitlements(self, subscription_service):
+        """测试基础套餐权益"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_ent_001", plan_type=PlanType.BASIC, duration_months=1
+        )
+        # Input
+        entitlements = await subscription_service.check_entitlement(sub["subscription_id"])
+        # Expected Output
+        assert entitlements["novel_quota_per_month"] > 0
+        assert entitlements["video_quota_per_month"] > 0
+        assert entitlements["max_chapters"] > 0
+        assert entitlements["priority"] == "normal"
+
+    @pytest.mark.asyncio
+    async def test_pro_plan_higher_entitlements(self, subscription_service):
+        """测试专业套餐权益高于基础套餐"""
+        basic_sub = await subscription_service.create_subscription(
+            user_id="user_ent_002", plan_type=PlanType.BASIC, duration_months=1
+        )
+        pro_sub = await subscription_service.create_subscription(
+            user_id="user_ent_003", plan_type=PlanType.PRO, duration_months=1
+        )
+        basic_ent = await subscription_service.check_entitlement(basic_sub["subscription_id"])
+        pro_ent = await subscription_service.check_entitlement(pro_sub["subscription_id"])
+        assert pro_ent["novel_quota_per_month"] > basic_ent["novel_quota_per_month"]
+        assert pro_ent["video_quota_per_month"] > basic_ent["video_quota_per_month"]
+
+    @pytest.mark.asyncio
+    async def test_expired_subscription_no_entitlement(self, subscription_service):
+        """测试过期订阅无权益"""
+        with pytest.raises(PermissionError, match="订阅已过期"):
+            await subscription_service.check_entitlement("expired_sub_id")
+```
+
+#### 2.5.5 test_quota_deduction - 配额扣减
+```python
+class TestQuotaDeduction:
+    """配额扣减接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_deduct_novel_quota(self, subscription_service):
+        """测试扣减小说生成配额"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_quota_001", plan_type=PlanType.PRO, duration_months=1
+        )
+        ent_before = await subscription_service.check_entitlement(sub["subscription_id"])
+        # Input: 扣减1次小说配额
+        result = await subscription_service.deduct_quota(
+            subscription_id=sub["subscription_id"],
+            resource_type="novel",
+            amount=1
+        )
+        # Expected Output
+        assert result["remaining"] == ent_before["novel_quota_per_month"] - 1
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_deduct_quota_insufficient(self, subscription_service):
+        """测试配额不足时扣减失败"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_quota_002", plan_type=PlanType.FREE, duration_months=1
+        )
+        with pytest.raises(ValueError, match="配额不足"):
+            await subscription_service.deduct_quota(
+                subscription_id=sub["subscription_id"],
+                resource_type="novel",
+                amount=9999
+            )
+```
+
+#### 2.5.6 test_subscription_expiry - 订阅过期处理
+```python
+class TestSubscriptionExpiry:
+    """订阅过期处理接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_expire_subscription(self, subscription_service):
+        """测试订阅到期自动过期"""
+        # Setup: 创建一个即将过期的订阅
+        sub = await subscription_service.create_subscription(
+            user_id="user_exp_001", plan_type=PlanType.BASIC, duration_months=1
+        )
+        # 模拟时间到期
+        with patch("app.services.subscription.datetime") as mock_dt:
+            mock_dt.utcnow.return_value = sub["end_time"] + timedelta(hours=1)
+            result = await subscription_service.process_expiry(sub["subscription_id"])
+        # Expected Output
+        assert result["status"] == SubscriptionStatus.EXPIRED
+        assert result["grace_period_end"] is not None  # 宽限期
+
+    @pytest.mark.asyncio
+    async def test_grace_period_access(self, subscription_service):
+        """测试宽限期内仍可有限访问"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_exp_002", plan_type=PlanType.PRO, duration_months=1
+        )
+        with patch("app.services.subscription.datetime") as mock_dt:
+            mock_dt.utcnow.return_value = sub["end_time"] + timedelta(hours=12)
+            result = await subscription_service.check_access(sub["subscription_id"])
+        assert result["can_read"] is True
+        assert result["can_create"] is False
+```
+
+#### 2.5.7 test_auto_renew - 自动续费
+```python
+class TestAutoRenew:
+    """自动续费接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_auto_renew_success(self, subscription_service):
+        """测试自动续费成功"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_renew_001", plan_type=PlanType.BASIC, duration_months=1
+        )
+        await subscription_service.enable_auto_renew(sub["subscription_id"])
+        # 模拟到期触发续费
+        with patch.object(subscription_service, "_charge_payment", return_value=True):
+            result = await subscription_service.process_auto_renew(sub["subscription_id"])
+        assert result["status"] == SubscriptionStatus.ACTIVE
+        assert result["renewed"] is True
+        assert result["new_end_time"] > sub["end_time"]
+
+    @pytest.mark.asyncio
+    async def test_auto_renew_payment_failed(self, subscription_service):
+        """测试自动续费支付失败"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_renew_002", plan_type=PlanType.BASIC, duration_months=1
+        )
+        await subscription_service.enable_auto_renew(sub["subscription_id"])
+        with patch.object(subscription_service, "_charge_payment", return_value=False):
+            result = await subscription_service.process_auto_renew(sub["subscription_id"])
+        assert result["renewed"] is False
+        assert result["retry_count"] == 1
+        assert result["next_retry"] is not None
+
+    @pytest.mark.asyncio
+    async def test_disable_auto_renew(self, subscription_service):
+        """测试关闭自动续费"""
+        sub = await subscription_service.create_subscription(
+            user_id="user_renew_003", plan_type=PlanType.BASIC, duration_months=1
+        )
+        await subscription_service.enable_auto_renew(sub["subscription_id"])
+        result = await subscription_service.disable_auto_renew(sub["subscription_id"])
+        assert result["auto_renew"] is False
+```
+
+### 2.6 支付服务单元测试
+
+#### 2.6.1 test_create_order - 创建支付订单
+```python
+# tests/unit/test_payment_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+from decimal import Decimal
+
+from app.services.payment import PaymentService, PaymentChannel, OrderStatus
+
+
+class TestCreateOrder:
+    """创建支付订单接口测试"""
+
+    @pytest.fixture
+    def payment_service(self, db_session):
+        return PaymentService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_create_alipay_order(self, payment_service):
+        """测试创建支付宝订单"""
+        # Input
+        result = await payment_service.create_order(
+            user_id="user_pay_001",
+            amount=Decimal("29.90"),
+            channel=PaymentChannel.ALIPAY,
+            product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        # Expected Output
+        assert result["order_id"] is not None
+        assert result["status"] == OrderStatus.PENDING
+        assert result["amount"] == Decimal("29.90")
+        assert result["channel"] == PaymentChannel.ALIPAY
+        assert "pay_url" in result or "pay_params" in result
+
+    @pytest.mark.asyncio
+    async def test_create_order_zero_amount_rejected(self, payment_service):
+        """测试零金额订单被拒绝"""
+        with pytest.raises(ValueError, match="金额必须大于0"):
+            await payment_service.create_order(
+                user_id="user_pay_002",
+                amount=Decimal("0"),
+                channel=PaymentChannel.ALIPAY,
+                product_type="subscription",
+                product_id="plan_basic_monthly"
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_order_generates_unique_id(self, payment_service):
+        """测试每个订单生成唯一ID"""
+        order1 = await payment_service.create_order(
+            user_id="user_pay_003", amount=Decimal("29.90"),
+            channel=PaymentChannel.WECHAT, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        order2 = await payment_service.create_order(
+            user_id="user_pay_003", amount=Decimal("29.90"),
+            channel=PaymentChannel.WECHAT, product_type="recharge",
+            product_id="recharge_100"
+        )
+        assert order1["order_id"] != order2["order_id"]
+```
+
+#### 2.6.2 test_alipay_webhook - 支付宝回调验签
+```python
+class TestAlipayWebhook:
+    """支付宝回调验签接口测试"""
+
+    @pytest.fixture
+    def payment_service(self, db_session):
+        svc = PaymentService(db=db_session)
+        svc.alipay_public_key = "test_alipay_public_key"
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_alipay_webhook_valid_signature(self, payment_service):
+        """测试合法支付宝回调验签通过"""
+        # Setup: 先创建订单
+        order = await payment_service.create_order(
+            user_id="user_ali_001", amount=Decimal("29.90"),
+            channel=PaymentChannel.ALIPAY, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        # Input: 模拟支付宝回调参数
+        callback_data = {
+            "out_trade_no": order["order_id"],
+            "trade_status": "TRADE_SUCCESS",
+            "total_amount": "29.90",
+            "sign": "mock_valid_signature",
+            "sign_type": "RSA2"
+        }
+        with patch.object(payment_service, "_verify_alipay_sign", return_value=True):
+            result = await payment_service.handle_alipay_webhook(callback_data)
+        # Expected Output
+        assert result["success"] is True
+        assert result["order_status"] == OrderStatus.PAID
+
+    @pytest.mark.asyncio
+    async def test_alipay_webhook_invalid_signature(self, payment_service):
+        """测试非法签名拒绝"""
+        callback_data = {
+            "out_trade_no": "fake_order",
+            "trade_status": "TRADE_SUCCESS",
+            "sign": "invalid_signature"
+        }
+        with patch.object(payment_service, "_verify_alipay_sign", return_value=False):
+            with pytest.raises(SecurityError, match="签名验证失败"):
+                await payment_service.handle_alipay_webhook(callback_data)
+```
+
+#### 2.6.3 test_wechat_webhook - 微信支付回调验签
+```python
+class TestWechatWebhook:
+    """微信支付回调验签接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_wechat_webhook_valid(self, payment_service):
+        """测试合法微信支付回调"""
+        order = await payment_service.create_order(
+            user_id="user_wx_001", amount=Decimal("29.90"),
+            channel=PaymentChannel.WECHAT, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        callback_xml = f"""
+        <xml>
+            <out_trade_no>{order["order_id"]}</out_trade_no>
+            <result_code>SUCCESS</result_code>
+            <total_fee>2990</total_fee>
+        </xml>
+        """
+        with patch.object(payment_service, "_verify_wechat_sign", return_value=True):
+            result = await payment_service.handle_wechat_webhook(callback_xml)
+        assert result["success"] is True
+        assert result["order_status"] == OrderStatus.PAID
+
+    @pytest.mark.asyncio
+    async def test_wechat_webhook_amount_mismatch(self, payment_service):
+        """测试金额不匹配拒绝"""
+        order = await payment_service.create_order(
+            user_id="user_wx_002", amount=Decimal("29.90"),
+            channel=PaymentChannel.WECHAT, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        callback_xml = f"""
+        <xml>
+            <out_trade_no>{order["order_id"]}</out_trade_no>
+            <result_code>SUCCESS</result_code>
+            <total_fee>100</total_fee>
+        </xml>
+        """
+        with patch.object(payment_service, "_verify_wechat_sign", return_value=True):
+            with pytest.raises(ValueError, match="金额不匹配"):
+                await payment_service.handle_wechat_webhook(callback_xml)
+```
+
+#### 2.6.4 test_douyin_webhook - 抖音支付回调验签
+```python
+class TestDouyinWebhook:
+    """抖音支付回调验签接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_douyin_webhook_valid(self, payment_service):
+        """测试合法抖音支付回调"""
+        order = await payment_service.create_order(
+            user_id="user_dy_001", amount=Decimal("29.90"),
+            channel=PaymentChannel.DOUYIN, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        callback_data = {
+            "cp_orderno": order["order_id"],
+            "status": "SUCCESS",
+            "total_amount": 2990,
+            "sign": "mock_valid_sign"
+        }
+        with patch.object(payment_service, "_verify_douyin_sign", return_value=True):
+            result = await payment_service.handle_douyin_webhook(callback_data)
+        assert result["success"] is True
+        assert result["order_status"] == OrderStatus.PAID
+
+    @pytest.mark.asyncio
+    async def test_douyin_webhook_replay_rejected(self, payment_service):
+        """测试重放攻击被拒绝（时间戳过期）"""
+        callback_data = {
+            "cp_orderno": "order_old",
+            "status": "SUCCESS",
+            "timestamp": 1000000,  # 过期时间戳
+            "sign": "mock_sign"
+        }
+        with pytest.raises(SecurityError, match="回调已过期"):
+            await payment_service.handle_douyin_webhook(callback_data)
+```
+
+#### 2.6.5 test_refund_request - 退款申请
+```python
+class TestRefundRequest:
+    """退款申请接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_refund_within_policy(self, payment_service):
+        """测试政策内退款成功"""
+        # Setup: 创建并支付订单
+        order = await payment_service.create_order(
+            user_id="user_ref_001", amount=Decimal("29.90"),
+            channel=PaymentChannel.ALIPAY, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        await payment_service._mark_paid(order["order_id"])
+        # Input
+        with patch.object(payment_service, "_submit_refund_to_channel", return_value=True):
+            result = await payment_service.request_refund(
+                order_id=order["order_id"],
+                reason="不想用了",
+                amount=Decimal("29.90")
+            )
+        # Expected Output
+        assert result["refund_status"] == "processing"
+        assert result["refund_amount"] == Decimal("29.90")
+
+    @pytest.mark.asyncio
+    async def test_partial_refund(self, payment_service):
+        """测试部分退款"""
+        order = await payment_service.create_order(
+            user_id="user_ref_002", amount=Decimal("99.00"),
+            channel=PaymentChannel.WECHAT, product_type="subscription",
+            product_id="plan_pro_monthly"
+        )
+        await payment_service._mark_paid(order["order_id"])
+        with patch.object(payment_service, "_submit_refund_to_channel", return_value=True):
+            result = await payment_service.request_refund(
+                order_id=order["order_id"],
+                reason="套餐使用不满意",
+                amount=Decimal("50.00")
+            )
+        assert result["refund_amount"] == Decimal("50.00")
+        assert result["refund_status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_refund_exceeds_paid_rejected(self, payment_service):
+        """测试退款金额超过支付金额被拒绝"""
+        order = await payment_service.create_order(
+            user_id="user_ref_003", amount=Decimal("29.90"),
+            channel=PaymentChannel.ALIPAY, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        await payment_service._mark_paid(order["order_id"])
+        with pytest.raises(ValueError, match="退款金额超过支付金额"):
+            await payment_service.request_refund(
+                order_id=order["order_id"],
+                reason="退款",
+                amount=Decimal("100.00")
+            )
+```
+
+#### 2.6.6 test_balance_deduction - 余额扣减（成本×1.1~1.2）
+```python
+class TestBalanceDeduction:
+    """余额扣减接口测试（含成本加成）"""
+
+    @pytest.mark.asyncio
+    async def test_balance_deduction_with_markup(self, payment_service):
+        """测试余额扣减含10%~20%成本加成"""
+        # Setup: 用户充值100元
+        await payment_service.recharge_balance(user_id="user_bal_001", amount=Decimal("100.00"))
+        # Input: 实际成本10元，按1.15倍扣减
+        result = await payment_service.deduct_balance(
+            user_id="user_bal_001",
+            base_cost=Decimal("10.00"),
+            markup_ratio=Decimal("1.15")
+        )
+        # Expected Output
+        assert result["deducted"] == Decimal("11.50")  # 10 * 1.15
+        assert result["remaining_balance"] == Decimal("88.50")
+        assert Decimal("1.1") <= result["markup_ratio"] <= Decimal("1.2")
+
+    @pytest.mark.asyncio
+    async def test_balance_deduction_insufficient(self, payment_service):
+        """测试余额不足时扣减失败"""
+        await payment_service.recharge_balance(user_id="user_bal_002", amount=Decimal("5.00"))
+        with pytest.raises(ValueError, match="余额不足"):
+            await payment_service.deduct_balance(
+                user_id="user_bal_002",
+                base_cost=Decimal("10.00"),
+                markup_ratio=Decimal("1.15")
+            )
+
+    @pytest.mark.asyncio
+    async def test_markup_ratio_boundary(self, payment_service):
+        """测试成本加成比例边界值"""
+        await payment_service.recharge_balance(user_id="user_bal_003", amount=Decimal("100.00"))
+        # 加成比例不在1.1~1.2范围内应拒绝
+        with pytest.raises(ValueError, match="加成比例超出范围"):
+            await payment_service.deduct_balance(
+                user_id="user_bal_003",
+                base_cost=Decimal("10.00"),
+                markup_ratio=Decimal("1.5")
+            )
+```
+
+#### 2.6.7 test_reconciliation - 对账检查
+```python
+class TestReconciliation:
+    """对账检查接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_match(self, payment_service):
+        """测试对账记录完全匹配"""
+        # Setup: 创建并支付几个订单
+        for i in range(3):
+            order = await payment_service.create_order(
+                user_id=f"user_recon_{i}", amount=Decimal("29.90"),
+                channel=PaymentChannel.ALIPAY, product_type="subscription",
+                product_id="plan_basic_monthly"
+            )
+            await payment_service._mark_paid(order["order_id"])
+        # Input: 模拟网关对账文件
+        gateway_records = [
+            {"trade_no": f"gateway_{i}", "amount": "29.90", "status": "SUCCESS"}
+            for i in range(3)
+        ]
+        with patch.object(payment_service, "_fetch_gateway_records", return_value=gateway_records):
+            result = await payment_service.reconcile(date="2025-01-15")
+        # Expected Output
+        assert result["matched"] == 3
+        assert result["mismatched"] == 0
+        assert result["missing_in_local"] == 0
+        assert result["missing_in_gateway"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_mismatch_detected(self, payment_service):
+        """测试对账不匹配被检测到"""
+        order = await payment_service.create_order(
+            user_id="user_recon_err", amount=Decimal("29.90"),
+            channel=PaymentChannel.ALIPAY, product_type="subscription",
+            product_id="plan_basic_monthly"
+        )
+        await payment_service._mark_paid(order["order_id"])
+        gateway_records = [
+            {"trade_no": "gateway_err", "amount": "19.90", "status": "SUCCESS"}
+        ]
+        with patch.object(payment_service, "_fetch_gateway_records", return_value=gateway_records):
+            result = await payment_service.reconcile(date="2025-01-15")
+        assert result["mismatched"] >= 1
+        assert len(result["mismatch_details"]) >= 1
+```
+
+### 2.7 多端认证单元测试
+
+#### 2.7.1 test_wechat_login - 微信小程序登录（code2session）
+```python
+# tests/unit/test_auth_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.auth import AuthService, AuthProvider
+
+
+class TestWechatLogin:
+    """微信小程序登录接口测试"""
+
+    @pytest.fixture
+    def auth_service(self, db_session):
+        return AuthService(db=db_session, config={
+            "wechat_appid": "wx_test_appid",
+            "wechat_secret": "wx_test_secret"
+        })
+
+    @pytest.mark.asyncio
+    async def test_wechat_login_new_user(self, auth_service):
+        """测试微信新用户首次登录自动注册"""
+        # Input
+        mock_response = {"openid": "wx_openid_001", "session_key": "mock_session_key"}
+        with patch.object(auth_service, "_wechat_code2session", return_value=mock_response):
+            result = await auth_service.wechat_login(code="mock_wx_code")
+        # Expected Output
+        assert result["access_token"] is not None
+        assert result["user_id"] is not None
+        assert result["is_new_user"] is True
+        assert result["provider"] == AuthProvider.WECHAT
+
+    @pytest.mark.asyncio
+    async def test_wechat_login_existing_user(self, auth_service):
+        """测试微信已注册用户登录"""
+        mock_response = {"openid": "wx_openid_002", "session_key": "mock_session_key"}
+        with patch.object(auth_service, "_wechat_code2session", return_value=mock_response):
+            first = await auth_service.wechat_login(code="mock_code_1")
+        with patch.object(auth_service, "_wechat_code2session", return_value=mock_response):
+            second = await auth_service.wechat_login(code="mock_code_2")
+        assert second["user_id"] == first["user_id"]
+        assert second["is_new_user"] is False
+
+    @pytest.mark.asyncio
+    async def test_wechat_login_invalid_code(self, auth_service):
+        """测试无效code登录失败"""
+        with patch.object(auth_service, "_wechat_code2session", side_effect=Exception("invalid code")):
+            with pytest.raises(ValueError, match="微信登录失败"):
+                await auth_service.wechat_login(code="invalid_code")
+```
+
+#### 2.7.2 test_douyin_login - 抖音登录
+```python
+class TestDouyinLogin:
+    """抖音登录接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_douyin_login_new_user(self, auth_service):
+        """测试抖音新用户登录"""
+        mock_response = {"openid": "dy_openid_001", "access_token": "dy_token"}
+        with patch.object(auth_service, "_douyin_code2session", return_value=mock_response):
+            result = await auth_service.douyin_login(code="mock_dy_code")
+        assert result["access_token"] is not None
+        assert result["is_new_user"] is True
+        assert result["provider"] == AuthProvider.DOUYIN
+
+    @pytest.mark.asyncio
+    async def test_douyin_login_existing_user(self, auth_service):
+        """测试抖音已注册用户登录"""
+        mock_response = {"openid": "dy_openid_002", "access_token": "dy_token"}
+        with patch.object(auth_service, "_douyin_code2session", return_value=mock_response):
+            first = await auth_service.douyin_login(code="code_1")
+        with patch.object(auth_service, "_douyin_code2session", return_value=mock_response):
+            second = await auth_service.douyin_login(code="code_2")
+        assert second["user_id"] == first["user_id"]
+```
+
+#### 2.7.3 test_phone_login - 手机号验证码登录
+```python
+class TestPhoneLogin:
+    """手机号验证码登录接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_send_sms_code(self, auth_service):
+        """测试发送短信验证码"""
+        with patch.object(auth_service, "_send_sms", return_value=True):
+            result = await auth_service.send_sms_code(phone="13800138000")
+        assert result["sent"] is True
+        assert result["expire_seconds"] == 300
+
+    @pytest.mark.asyncio
+    async def test_phone_login_valid_code(self, auth_service):
+        """测试正确验证码登录成功"""
+        with patch.object(auth_service, "_verify_sms_code", return_value=True):
+            result = await auth_service.phone_login(phone="13800138000", code="123456")
+        assert result["access_token"] is not None
+        assert result["user_id"] is not None
+
+    @pytest.mark.asyncio
+    async def test_phone_login_wrong_code(self, auth_service):
+        """测试错误验证码登录失败"""
+        with patch.object(auth_service, "_verify_sms_code", return_value=False):
+            with pytest.raises(ValueError, match="验证码错误"):
+                await auth_service.phone_login(phone="13800138000", code="000000")
+
+    @pytest.mark.asyncio
+    async def test_sms_rate_limit(self, auth_service):
+        """测试短信发送频率限制"""
+        with patch.object(auth_service, "_send_sms", return_value=True):
+            await auth_service.send_sms_code(phone="13800138001")
+        with pytest.raises(ValueError, match="发送过于频繁"):
+            await auth_service.send_sms_code(phone="13800138001")
+```
+
+#### 2.7.4 test_bind_account - 绑定第三方账号
+```python
+class TestBindAccount:
+    """绑定第三方账号接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_bind_wechat_to_phone_user(self, auth_service):
+        """测试手机用户绑定微信账号"""
+        # Setup: 手机号注册用户
+        with patch.object(auth_service, "_verify_sms_code", return_value=True):
+            user = await auth_service.phone_login(phone="13900139000", code="123456")
+        # Input: 绑定微信
+        mock_wx = {"openid": "wx_bind_001", "session_key": "key"}
+        with patch.object(auth_service, "_wechat_code2session", return_value=mock_wx):
+            result = await auth_service.bind_account(
+                user_id=user["user_id"],
+                provider=AuthProvider.WECHAT,
+                code="wx_bind_code"
+            )
+        # Expected Output
+        assert result["bound"] is True
+        assert AuthProvider.WECHAT in result["linked_providers"]
+
+    @pytest.mark.asyncio
+    async def test_bind_duplicate_rejected(self, auth_service):
+        """测试重复绑定同一平台被拒绝"""
+        with patch.object(auth_service, "_verify_sms_code", return_value=True):
+            user = await auth_service.phone_login(phone="13900139001", code="123456")
+        mock_wx = {"openid": "wx_bind_002", "session_key": "key"}
+        with patch.object(auth_service, "_wechat_code2session", return_value=mock_wx):
+            await auth_service.bind_account(
+                user_id=user["user_id"], provider=AuthProvider.WECHAT, code="code1"
+            )
+            with pytest.raises(ValueError, match="已绑定该平台"):
+                await auth_service.bind_account(
+                    user_id=user["user_id"], provider=AuthProvider.WECHAT, code="code2"
+                )
+```
+
+#### 2.7.5 test_sso_token - SSO令牌生成与验证
+```python
+class TestSSOToken:
+    """SSO令牌生成与验证接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_generate_sso_token(self, auth_service):
+        """测试生成SSO令牌"""
+        result = await auth_service.generate_sso_token(
+            user_id="user_sso_001",
+            scope=["novel:read", "novel:write"]
+        )
+        assert result["token"] is not None
+        assert result["expires_in"] > 0
+        assert result["token_type"] == "Bearer"
+
+    @pytest.mark.asyncio
+    async def test_verify_sso_token_valid(self, auth_service):
+        """测试验证有效SSO令牌"""
+        token_result = await auth_service.generate_sso_token(
+            user_id="user_sso_002", scope=["novel:read"]
+        )
+        result = await auth_service.verify_sso_token(token_result["token"])
+        assert result["valid"] is True
+        assert result["user_id"] == "user_sso_002"
+        assert "novel:read" in result["scope"]
+
+    @pytest.mark.asyncio
+    async def test_verify_sso_token_expired(self, auth_service):
+        """测试过期SSO令牌验证失败"""
+        with patch("app.services.auth.time.time", return_value=0):
+            token_result = await auth_service.generate_sso_token(
+                user_id="user_sso_003", scope=["novel:read"]
+            )
+        result = await auth_service.verify_sso_token(token_result["token"])
+        assert result["valid"] is False
+        assert result["reason"] == "token_expired"
+
+    @pytest.mark.asyncio
+    async def test_verify_sso_token_tampered(self, auth_service):
+        """测试篡改令牌验证失败"""
+        result = await auth_service.verify_sso_token("tampered.invalid.token")
+        assert result["valid"] is False
+        assert result["reason"] == "invalid_signature"
+```
+
+### 2.8 OpenClaw集成单元测试
+
+#### 2.8.1 test_api_key_auth - API Key认证
+```python
+# tests/unit/test_openclaw_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.openclaw import OpenClawService, TaskStatus
+
+
+class TestAPIKeyAuth:
+    """OpenClaw API Key认证接口测试"""
+
+    @pytest.fixture
+    def openclaw_service(self, db_session):
+        return OpenClawService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_valid_api_key(self, openclaw_service):
+        """测试有效API Key认证通过"""
+        # Setup: 创建API Key
+        key_info = await openclaw_service.create_api_key(
+            user_id="user_oc_001", name="test_key"
+        )
+        # Input
+        result = await openclaw_service.authenticate(api_key=key_info["api_key"])
+        # Expected Output
+        assert result["authenticated"] is True
+        assert result["user_id"] == "user_oc_001"
+        assert result["key_name"] == "test_key"
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_key(self, openclaw_service):
+        """测试无效API Key认证失败"""
+        result = await openclaw_service.authenticate(api_key="invalid_key_12345")
+        assert result["authenticated"] is False
+
+    @pytest.mark.asyncio
+    async def test_revoked_api_key(self, openclaw_service):
+        """测试已吊销API Key认证失败"""
+        key_info = await openclaw_service.create_api_key(
+            user_id="user_oc_002", name="revoked_key"
+        )
+        await openclaw_service.revoke_api_key(key_info["api_key"])
+        result = await openclaw_service.authenticate(api_key=key_info["api_key"])
+        assert result["authenticated"] is False
+
+    @pytest.mark.asyncio
+    async def test_api_key_rate_limit(self, openclaw_service):
+        """测试API Key请求频率限制"""
+        key_info = await openclaw_service.create_api_key(
+            user_id="user_oc_003", name="rate_test"
+        )
+        for _ in range(100):
+            await openclaw_service.authenticate(api_key=key_info["api_key"])
+        with pytest.raises(ValueError, match="请求频率超限"):
+            await openclaw_service.authenticate(api_key=key_info["api_key"])
+```
+
+#### 2.8.2 test_create_task - 创建任务
+```python
+class TestCreateTask:
+    """OpenClaw创建任务接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_create_novel_task(self, openclaw_service):
+        """测试通过API创建小说生成任务"""
+        result = await openclaw_service.create_task(
+            user_id="user_oc_task_001",
+            task_type="novel_generation",
+            params={
+                "genre": "都市现实",
+                "chapters": 18,
+                "style": "轻松幽默"
+            }
+        )
+        assert result["task_id"] is not None
+        assert result["status"] == TaskStatus.QUEUED
+        assert result["estimated_time_seconds"] > 0
+
+    @pytest.mark.asyncio
+    async def test_create_task_quota_check(self, openclaw_service):
+        """测试创建任务时检查配额"""
+        with patch.object(openclaw_service, "_check_quota", return_value=False):
+            with pytest.raises(ValueError, match="配额不足"):
+                await openclaw_service.create_task(
+                    user_id="user_oc_task_002",
+                    task_type="novel_generation",
+                    params={"genre": "科幻", "chapters": 18}
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_task_invalid_params(self, openclaw_service):
+        """测试无效参数被拒绝"""
+        with pytest.raises(ValueError, match="参数校验失败"):
+            await openclaw_service.create_task(
+                user_id="user_oc_task_003",
+                task_type="novel_generation",
+                params={"chapters": -1}  # 无效章节数
+            )
+```
+
+#### 2.8.3 test_task_progress - 任务进度查询
+```python
+class TestTaskProgress:
+    """任务进度查询接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_query_task_progress(self, openclaw_service):
+        """测试查询任务进度"""
+        task = await openclaw_service.create_task(
+            user_id="user_oc_prog_001",
+            task_type="novel_generation",
+            params={"genre": "都市", "chapters": 6}
+        )
+        result = await openclaw_service.get_task_progress(task["task_id"])
+        assert "progress_percent" in result
+        assert 0 <= result["progress_percent"] <= 100
+        assert result["status"] in [s.value for s in TaskStatus]
+        assert "current_step" in result
+
+    @pytest.mark.asyncio
+    async def test_query_nonexistent_task(self, openclaw_service):
+        """测试查询不存在的任务返回404"""
+        with pytest.raises(FileNotFoundError, match="任务不存在"):
+            await openclaw_service.get_task_progress("nonexistent_task_id")
+```
+
+#### 2.8.4 test_balance_query - 余额查询
+```python
+class TestBalanceQuery:
+    """OpenClaw余额查询接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_query_balance(self, openclaw_service):
+        """测试查询用户余额"""
+        result = await openclaw_service.get_balance(user_id="user_oc_bal_001")
+        assert "balance" in result
+        assert "currency" in result
+        assert result["balance"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_query_balance_with_usage(self, openclaw_service):
+        """测试余额查询包含使用统计"""
+        result = await openclaw_service.get_balance(
+            user_id="user_oc_bal_002", include_usage=True
+        )
+        assert "usage_this_month" in result
+        assert "total_spent" in result
+```
+
+#### 2.8.5 test_config_sync - 配置同步
+```python
+class TestConfigSync:
+    """配置同步接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_sync_config_to_remote(self, openclaw_service):
+        """测试配置同步到远程"""
+        config = {
+            "default_model": "deepseek-v3",
+            "max_chapters": 18,
+            "batch_size": 3,
+            "tts_voice": "fish_audio_default"
+        }
+        result = await openclaw_service.sync_config(
+            user_id="user_oc_cfg_001", config=config, direction="push"
+        )
+        assert result["synced"] is True
+        assert result["version"] > 0
+
+    @pytest.mark.asyncio
+    async def test_sync_config_from_remote(self, openclaw_service):
+        """测试从远程拉取配置"""
+        config = {"default_model": "deepseek-v3", "max_chapters": 18}
+        await openclaw_service.sync_config(
+            user_id="user_oc_cfg_002", config=config, direction="push"
+        )
+        result = await openclaw_service.sync_config(
+            user_id="user_oc_cfg_002", config=None, direction="pull"
+        )
+        assert result["config"]["default_model"] == "deepseek-v3"
+
+    @pytest.mark.asyncio
+    async def test_config_conflict_resolution(self, openclaw_service):
+        """测试配置冲突解决（远程版本更新）"""
+        result = await openclaw_service.sync_config(
+            user_id="user_oc_cfg_003",
+            config={"max_chapters": 24},
+            direction="push",
+            expected_version=1  # 本地版本号
+        )
+        if result.get("conflict"):
+            assert result["resolution"] in ["local_wins", "remote_wins", "merged"]
+```
+
+### 2.9 多平台发布单元测试
+
+#### 2.9.1 test_platform_adapter - 平台适配器
+```python
+# tests/unit/test_publish_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.publish import PublishService, PlatformAdapter, PlatformType
+
+
+class TestPlatformAdapter:
+    """平台适配器接口测试"""
+
+    @pytest.fixture
+    def publish_service(self, db_session):
+        return PublishService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_douyin_adapter_format(self, publish_service):
+        """测试抖音平台适配器内容格式化"""
+        adapter = publish_service.get_adapter(PlatformType.DOUYIN)
+        content = {
+            "title": "测试视频标题",
+            "video_path": "/tmp/test.mp4",
+            "description": "测试描述",
+            "tags": ["AI小说", "都市"]
+        }
+        # Expected Output: 符合抖音API要求的格式
+        formatted = await adapter.format_content(content)
+        assert "title" in formatted
+        assert len(formatted["title"]) <= 55  # 抖音标题限制
+        assert "video" in formatted
+        assert "poi_id" not in formatted or formatted["poi_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_xiaohongshu_adapter_format(self, publish_service):
+        """测试小红书平台适配器内容格式化"""
+        adapter = publish_service.get_adapter(PlatformType.XIAOHONGSHU)
+        content = {
+            "title": "测试笔记标题",
+            "images": ["/tmp/cover.jpg"],
+            "description": "测试内容描述",
+            "tags": ["AI写作", "小说"]
+        }
+        formatted = await adapter.format_content(content)
+        assert "title" in formatted
+        assert "images" in formatted
+        assert len(formatted["tags"]) <= 10  # 小红书标签数限制
+
+    @pytest.mark.asyncio
+    async def test_fanqie_adapter_format(self, publish_service):
+        """测试番茄小说平台适配器内容格式化"""
+        adapter = publish_service.get_adapter(PlatformType.FANQIE)
+        content = {
+            "novel_title": "都市之巅",
+            "chapters": [{"title": "第一章", "content": "正文..."}],
+            "genre": "都市现实",
+            "synopsis": "简介..."
+        }
+        formatted = await adapter.format_content(content)
+        assert "book_name" in formatted
+        assert "category" in formatted
+        assert "chapters" in formatted
+
+    @pytest.mark.asyncio
+    async def test_unsupported_platform(self, publish_service):
+        """测试不支持的平台返回错误"""
+        with pytest.raises(ValueError, match="不支持的平台"):
+            publish_service.get_adapter("unsupported_platform")
+```
+
+#### 2.9.2 test_oauth_bind - OAuth账号绑定
+```python
+class TestOAuthBind:
+    """OAuth账号绑定接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_bind_douyin_creator(self, publish_service):
+        """测试绑定抖音创作者账号"""
+        with patch.object(publish_service, "_exchange_oauth_token", return_value={
+            "access_token": "dy_access_token",
+            "refresh_token": "dy_refresh_token",
+            "expires_in": 86400,
+            "open_id": "dy_creator_001"
+        }):
+            result = await publish_service.bind_platform_account(
+                user_id="user_pub_001",
+                platform=PlatformType.DOUYIN,
+                oauth_code="mock_oauth_code"
+            )
+        assert result["bound"] is True
+        assert result["platform"] == PlatformType.DOUYIN
+        assert result["platform_user_id"] == "dy_creator_001"
+
+    @pytest.mark.asyncio
+    async def test_refresh_expired_token(self, publish_service):
+        """测试刷新过期OAuth令牌"""
+        with patch.object(publish_service, "_refresh_oauth_token", return_value={
+            "access_token": "new_token",
+            "expires_in": 86400
+        }):
+            result = await publish_service.refresh_platform_token(
+                user_id="user_pub_002", platform=PlatformType.DOUYIN
+            )
+        assert result["refreshed"] is True
+        assert result["new_expires_in"] == 86400
+```
+
+#### 2.9.3 test_smart_schedule - 智能排期
+```python
+class TestSmartSchedule:
+    """智能排期接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_generate_schedule(self, publish_service):
+        """测试生成智能发布排期"""
+        result = await publish_service.generate_schedule(
+            user_id="user_sch_001",
+            content_count=7,
+            platforms=[PlatformType.DOUYIN, PlatformType.XIAOHONGSHU],
+            preferences={"peak_hours": True, "avoid_weekends": False}
+        )
+        assert len(result["schedule"]) == 7
+        for item in result["schedule"]:
+            assert "publish_time" in item
+            assert "platform" in item
+            assert item["platform"] in [PlatformType.DOUYIN, PlatformType.XIAOHONGSHU]
+
+    @pytest.mark.asyncio
+    async def test_schedule_respects_platform_limits(self, publish_service):
+        """测试排期遵守平台发布频率限制"""
+        result = await publish_service.generate_schedule(
+            user_id="user_sch_002",
+            content_count=20,
+            platforms=[PlatformType.DOUYIN],
+            preferences={}
+        )
+        from collections import Counter
+        daily_counts = Counter()
+        for item in result["schedule"]:
+            day = item["publish_time"].date()
+            daily_counts[day] += 1
+        for day, count in daily_counts.items():
+            assert count <= 5  # 抖音每日发布上限
+
+    @pytest.mark.asyncio
+    async def test_schedule_peak_hours(self, publish_service):
+        """测试高峰时段优先排期"""
+        result = await publish_service.generate_schedule(
+            user_id="user_sch_003",
+            content_count=3,
+            platforms=[PlatformType.DOUYIN],
+            preferences={"peak_hours": True}
+        )
+        peak_hours = {11, 12, 18, 19, 20, 21}
+        for item in result["schedule"]:
+            assert item["publish_time"].hour in peak_hours
+```
+
+#### 2.9.4 test_compliance_check - 合规预检
+```python
+class TestComplianceCheck:
+    """合规预检接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_content_passes_compliance(self, publish_service):
+        """测试正常内容通过合规检查"""
+        result = await publish_service.check_compliance(
+            content={"title": "美好的一天", "text": "阳光明媚，春暖花开"},
+            platform=PlatformType.DOUYIN
+        )
+        assert result["passed"] is True
+        assert len(result["violations"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_content_fails_compliance(self, publish_service):
+        """测试违规内容被拦截"""
+        with patch.object(publish_service, "_run_content_filter", return_value={
+            "safe": False, "categories": ["political_sensitive"]
+        }):
+            result = await publish_service.check_compliance(
+                content={"title": "敏感标题", "text": "敏感内容..."},
+                platform=PlatformType.DOUYIN
+            )
+        assert result["passed"] is False
+        assert len(result["violations"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_platform_specific_rules(self, publish_service):
+        """测试平台特定合规规则"""
+        content = {"title": "A" * 100, "text": "正常内容"}
+        result_dy = await publish_service.check_compliance(
+            content=content, platform=PlatformType.DOUYIN
+        )
+        # 抖音标题超长应报警告
+        assert any(v["type"] == "title_too_long" for v in result_dy.get("warnings", []))
+```
+
+#### 2.9.5 test_publish_status_track - 发布状态跟踪
+```python
+class TestPublishStatusTrack:
+    """发布状态跟踪接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_track_publish_status(self, publish_service):
+        """测试跟踪发布状态"""
+        # Setup: 模拟已提交发布
+        publish_id = "pub_track_001"
+        with patch.object(publish_service, "_query_platform_status", return_value={
+            "status": "published", "url": "https://douyin.com/video/123"
+        }):
+            result = await publish_service.get_publish_status(publish_id)
+        assert result["status"] in ["pending", "processing", "published", "failed", "rejected"]
+
+    @pytest.mark.asyncio
+    async def test_track_multi_platform_status(self, publish_service):
+        """测试多平台发布状态聚合"""
+        batch_id = "batch_001"
+        result = await publish_service.get_batch_status(batch_id)
+        assert "platforms" in result
+        for platform_status in result["platforms"]:
+            assert "platform" in platform_status
+            assert "status" in platform_status
+
+    @pytest.mark.asyncio
+    async def test_publish_retry_on_failure(self, publish_service):
+        """测试发布失败后重试"""
+        publish_id = "pub_retry_001"
+        with patch.object(publish_service, "_submit_to_platform", side_effect=[
+            Exception("网络超时"), {"status": "published"}
+        ]):
+            result = await publish_service.retry_publish(publish_id, max_retries=2)
+        assert result["status"] == "published"
+        assert result["retry_count"] == 1
+```
+
+### 2.10 视频评审单元测试
+
+#### 2.10.1 test_auto_review - 自动评审
+```python
+# tests/unit/test_review_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.review import ReviewService, ReviewResult, ReviewLevel
+
+
+class TestAutoReview:
+    """自动评审接口测试"""
+
+    @pytest.fixture
+    def review_service(self, db_session):
+        return ReviewService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_auto_review_pass(self, review_service):
+        """测试视频自动评审通过"""
+        # Input
+        result = await review_service.auto_review(
+            video_id="video_001",
+            video_path="/tmp/test_video.mp4",
+            metadata={"duration": 60, "resolution": "1080p", "fps": 30}
+        )
+        # Expected Output
+        assert result["level"] == ReviewLevel.AUTO
+        assert result["passed"] is True
+        assert result["score"] >= 0.7
+        assert "checks" in result
+        assert "duration_valid" in result["checks"]
+        assert "resolution_valid" in result["checks"]
+
+    @pytest.mark.asyncio
+    async def test_auto_review_fail_duration(self, review_service):
+        """测试时长不合规自动拒绝"""
+        result = await review_service.auto_review(
+            video_id="video_002",
+            video_path="/tmp/short_video.mp4",
+            metadata={"duration": 2, "resolution": "1080p", "fps": 30}
+        )
+        assert result["passed"] is False
+        assert "duration_valid" in result["checks"]
+        assert result["checks"]["duration_valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_auto_review_borderline_escalates(self, review_service):
+        """测试边界分数自动升级到AI评审"""
+        with patch.object(review_service, "_compute_auto_score", return_value=0.65):
+            result = await review_service.auto_review(
+                video_id="video_003",
+                video_path="/tmp/borderline.mp4",
+                metadata={"duration": 30, "resolution": "720p", "fps": 24}
+            )
+        assert result["escalated"] is True
+        assert result["next_level"] == ReviewLevel.AI
+```
+
+#### 2.10.2 test_ai_review - AI深度评审
+```python
+class TestAIReview:
+    """AI深度评审接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_ai_review_comprehensive(self, review_service):
+        """测试AI综合评审"""
+        with patch.object(review_service, "_call_ai_model", return_value={
+            "story_coherence": 0.85,
+            "visual_quality": 0.80,
+            "audio_quality": 0.90,
+            "pacing": 0.75,
+            "overall": 0.82
+        }):
+            result = await review_service.ai_review(
+                video_id="video_ai_001",
+                video_path="/tmp/ai_review.mp4"
+            )
+        assert result["level"] == ReviewLevel.AI
+        assert "story_coherence" in result["scores"]
+        assert "visual_quality" in result["scores"]
+        assert result["overall_score"] > 0
+        assert "suggestions" in result
+
+    @pytest.mark.asyncio
+    async def test_ai_review_low_score_escalates(self, review_service):
+        """测试AI评审低分升级到人工评审"""
+        with patch.object(review_service, "_call_ai_model", return_value={
+            "story_coherence": 0.40,
+            "visual_quality": 0.50,
+            "audio_quality": 0.45,
+            "pacing": 0.35,
+            "overall": 0.42
+        }):
+            result = await review_service.ai_review(
+                video_id="video_ai_002", video_path="/tmp/low_score.mp4"
+            )
+        assert result["escalated"] is True
+        assert result["next_level"] == ReviewLevel.HUMAN
+```
+
+#### 2.10.3 test_human_review - 人工评审流程
+```python
+class TestHumanReview:
+    """人工评审流程接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_assign_human_reviewer(self, review_service):
+        """测试分配人工审核员"""
+        result = await review_service.assign_reviewer(
+            video_id="video_hr_001", reviewer_pool=["reviewer_a", "reviewer_b"]
+        )
+        assert result["assigned_to"] in ["reviewer_a", "reviewer_b"]
+        assert result["deadline"] is not None
+
+    @pytest.mark.asyncio
+    async def test_submit_human_review(self, review_service):
+        """测试提交人工评审结果"""
+        result = await review_service.submit_human_review(
+            video_id="video_hr_002",
+            reviewer_id="reviewer_a",
+            decision="approved",
+            comments="质量良好，可以发布",
+            scores={"story": 4, "visual": 5, "audio": 4}
+        )
+        assert result["level"] == ReviewLevel.HUMAN
+        assert result["decision"] == "approved"
+        assert result["reviewer_id"] == "reviewer_a"
+
+    @pytest.mark.asyncio
+    async def test_human_review_reject_with_reason(self, review_service):
+        """测试人工评审拒绝并附原因"""
+        result = await review_service.submit_human_review(
+            video_id="video_hr_003",
+            reviewer_id="reviewer_b",
+            decision="rejected",
+            comments="画面质量太差，需要重新生成",
+            scores={"story": 3, "visual": 1, "audio": 2}
+        )
+        assert result["decision"] == "rejected"
+        assert result["revision_required"] is True
+```
+
+#### 2.10.4 test_memory_point_detect - 记忆点检测
+```python
+class TestMemoryPointDetect:
+    """记忆点检测接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_detect_memory_points(self, review_service):
+        """测试检测视频记忆点"""
+        with patch.object(review_service, "_analyze_engagement", return_value=[
+            {"timestamp": 5.0, "type": "hook", "strength": 0.9},
+            {"timestamp": 30.0, "type": "climax", "strength": 0.85},
+            {"timestamp": 55.0, "type": "cliffhanger", "strength": 0.8}
+        ]):
+            result = await review_service.detect_memory_points(
+                video_id="video_mp_001", video_path="/tmp/memory_test.mp4"
+            )
+        assert len(result["memory_points"]) >= 1
+        for point in result["memory_points"]:
+            assert "timestamp" in point
+            assert "type" in point
+            assert "strength" in point
+            assert point["strength"] >= 0.0
+
+    @pytest.mark.asyncio
+    async def test_no_memory_points(self, review_service):
+        """测试无记忆点视频标记为低吸引力"""
+        with patch.object(review_service, "_analyze_engagement", return_value=[]):
+            result = await review_service.detect_memory_points(
+                video_id="video_mp_002", video_path="/tmp/boring.mp4"
+            )
+        assert len(result["memory_points"]) == 0
+        assert result["engagement_risk"] == "high"
+```
+
+#### 2.10.5 test_opening_quality - 开头质量评分
+```python
+class TestOpeningQuality:
+    """开头质量评分接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_opening_quality_score(self, review_service):
+        """测试开头质量评分"""
+        with patch.object(review_service, "_analyze_opening", return_value={
+            "hook_score": 0.85,
+            "first_3s_retention": 0.92,
+            "visual_impact": 0.80,
+            "audio_impact": 0.75
+        }):
+            result = await review_service.evaluate_opening(
+                video_id="video_op_001", video_path="/tmp/opening_test.mp4"
+            )
+        assert "hook_score" in result
+        assert "first_3s_retention" in result
+        assert result["overall_opening_score"] > 0
+        assert "recommendation" in result
+
+    @pytest.mark.asyncio
+    async def test_weak_opening_flagged(self, review_service):
+        """测试弱开头被标记"""
+        with patch.object(review_service, "_analyze_opening", return_value={
+            "hook_score": 0.3,
+            "first_3s_retention": 0.4,
+            "visual_impact": 0.35,
+            "audio_impact": 0.30
+        }):
+            result = await review_service.evaluate_opening(
+                video_id="video_op_002", video_path="/tmp/weak_opening.mp4"
+            )
+        assert result["overall_opening_score"] < 0.5
+        assert result["needs_improvement"] is True
+        assert "recommendation" in result
+```
+
+### 2.11 内容广场单元测试
+
+#### 2.11.1 test_publish_to_square - 发布到广场
+```python
+# tests/unit/test_square_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.square import SquareService, ContentType, ContentStatus
+
+
+class TestPublishToSquare:
+    """发布到内容广场接口测试"""
+
+    @pytest.fixture
+    def square_service(self, db_session):
+        return SquareService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_publish_novel_to_square(self, square_service):
+        """测试发布小说到内容广场"""
+        result = await square_service.publish(
+            user_id="user_sq_001",
+            content_type=ContentType.NOVEL,
+            content_id="novel_001",
+            title="都市传奇",
+            description="一个关于都市的传奇故事",
+            tags=["都市", "传奇"]
+        )
+        assert result["square_id"] is not None
+        assert result["status"] == ContentStatus.PUBLISHED
+        assert result["content_type"] == ContentType.NOVEL
+
+    @pytest.mark.asyncio
+    async def test_publish_video_to_square(self, square_service):
+        """测试发布视频到内容广场"""
+        result = await square_service.publish(
+            user_id="user_sq_002",
+            content_type=ContentType.VIDEO,
+            content_id="video_001",
+            title="AI生成短视频",
+            description="由AI自动生成的短视频",
+            tags=["AI", "短视频"],
+            cover_url="https://example.com/cover.jpg"
+        )
+        assert result["square_id"] is not None
+        assert result["content_type"] == ContentType.VIDEO
+
+    @pytest.mark.asyncio
+    async def test_publish_duplicate_rejected(self, square_service):
+        """测试重复发布被拒绝"""
+        await square_service.publish(
+            user_id="user_sq_003", content_type=ContentType.NOVEL,
+            content_id="novel_dup", title="重复测试", description="",  tags=[]
+        )
+        with pytest.raises(ValueError, match="内容已发布"):
+            await square_service.publish(
+                user_id="user_sq_003", content_type=ContentType.NOVEL,
+                content_id="novel_dup", title="重复测试", description="", tags=[]
+            )
+```
+
+#### 2.11.2 test_interaction - 点赞/收藏/评论
+```python
+class TestInteraction:
+    """内容广场交互接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_like_content(self, square_service):
+        """测试点赞内容"""
+        pub = await square_service.publish(
+            user_id="user_int_001", content_type=ContentType.NOVEL,
+            content_id="novel_like", title="测试", description="", tags=[]
+        )
+        result = await square_service.like(
+            user_id="user_int_002", square_id=pub["square_id"]
+        )
+        assert result["liked"] is True
+        assert result["like_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_unlike_content(self, square_service):
+        """测试取消点赞"""
+        pub = await square_service.publish(
+            user_id="user_int_003", content_type=ContentType.NOVEL,
+            content_id="novel_unlike", title="测试", description="", tags=[]
+        )
+        await square_service.like(user_id="user_int_004", square_id=pub["square_id"])
+        result = await square_service.unlike(user_id="user_int_004", square_id=pub["square_id"])
+        assert result["liked"] is False
+        assert result["like_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_favorite_content(self, square_service):
+        """测试收藏内容"""
+        pub = await square_service.publish(
+            user_id="user_int_005", content_type=ContentType.NOVEL,
+            content_id="novel_fav", title="测试", description="", tags=[]
+        )
+        result = await square_service.favorite(
+            user_id="user_int_006", square_id=pub["square_id"]
+        )
+        assert result["favorited"] is True
+        assert result["favorite_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_comment_content(self, square_service):
+        """测试评论内容"""
+        pub = await square_service.publish(
+            user_id="user_int_007", content_type=ContentType.NOVEL,
+            content_id="novel_comment", title="测试", description="", tags=[]
+        )
+        result = await square_service.comment(
+            user_id="user_int_008",
+            square_id=pub["square_id"],
+            text="写得真好！"
+        )
+        assert result["comment_id"] is not None
+        assert result["text"] == "写得真好！"
+        assert result["comment_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_self_like_rejected(self, square_service):
+        """测试自己不能给自己点赞"""
+        pub = await square_service.publish(
+            user_id="user_int_009", content_type=ContentType.NOVEL,
+            content_id="novel_self", title="测试", description="", tags=[]
+        )
+        with pytest.raises(ValueError, match="不能给自己的内容点赞"):
+            await square_service.like(user_id="user_int_009", square_id=pub["square_id"])
+```
+
+#### 2.11.3 test_report - 举报处理
+```python
+class TestReport:
+    """举报处理接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_report_content(self, square_service):
+        """测试举报违规内容"""
+        pub = await square_service.publish(
+            user_id="user_rpt_001", content_type=ContentType.NOVEL,
+            content_id="novel_report", title="测试", description="", tags=[]
+        )
+        result = await square_service.report(
+            reporter_id="user_rpt_002",
+            square_id=pub["square_id"],
+            reason="涉嫌抄袭",
+            category="plagiarism"
+        )
+        assert result["report_id"] is not None
+        assert result["status"] == "pending_review"
+
+    @pytest.mark.asyncio
+    async def test_report_threshold_auto_hide(self, square_service):
+        """测试举报达到阈值自动隐藏"""
+        pub = await square_service.publish(
+            user_id="user_rpt_003", content_type=ContentType.NOVEL,
+            content_id="novel_hide", title="测试", description="", tags=[]
+        )
+        for i in range(5):
+            await square_service.report(
+                reporter_id=f"reporter_{i}",
+                square_id=pub["square_id"],
+                reason="违规内容", category="inappropriate"
+            )
+        status = await square_service.get_content_status(pub["square_id"])
+        assert status["visible"] is False
+        assert status["reason"] == "auto_hidden_by_reports"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_report_rejected(self, square_service):
+        """测试同一用户重复举报被拒绝"""
+        pub = await square_service.publish(
+            user_id="user_rpt_004", content_type=ContentType.NOVEL,
+            content_id="novel_dup_rpt", title="测试", description="", tags=[]
+        )
+        await square_service.report(
+            reporter_id="reporter_dup", square_id=pub["square_id"],
+            reason="违规", category="inappropriate"
+        )
+        with pytest.raises(ValueError, match="已举报过该内容"):
+            await square_service.report(
+                reporter_id="reporter_dup", square_id=pub["square_id"],
+                reason="再次举报", category="inappropriate"
+            )
+```
+
+#### 2.11.4 test_ranking - 排行榜计算
+```python
+class TestRanking:
+    """排行榜计算接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_daily_ranking(self, square_service):
+        """测试日榜计算"""
+        result = await square_service.get_ranking(
+            period="daily", content_type=ContentType.NOVEL, limit=10
+        )
+        assert len(result["items"]) <= 10
+        scores = [item["score"] for item in result["items"]]
+        assert scores == sorted(scores, reverse=True)  # 降序排列
+
+    @pytest.mark.asyncio
+    async def test_ranking_score_formula(self, square_service):
+        """测试排行榜评分公式（综合点赞、收藏、评论）"""
+        result = await square_service.calculate_score(
+            likes=100, favorites=50, comments=30, views=1000
+        )
+        assert result["score"] > 0
+        # 收藏权重 > 点赞权重 > 评论权重
+        score_likes_only = await square_service.calculate_score(
+            likes=100, favorites=0, comments=0, views=1000
+        )
+        score_favs_only = await square_service.calculate_score(
+            likes=0, favorites=100, comments=0, views=1000
+        )
+        assert score_favs_only["score"] > score_likes_only["score"]
+
+    @pytest.mark.asyncio
+    async def test_ranking_excludes_hidden(self, square_service):
+        """测试排行榜排除被隐藏内容"""
+        result = await square_service.get_ranking(
+            period="daily", content_type=ContentType.NOVEL, limit=50
+        )
+        for item in result["items"]:
+            assert item["status"] != ContentStatus.HIDDEN
+```
+
+### 2.12 专家建议服务单元测试
+
+#### 2.12.1 test_advice_match - 建议匹配
+```python
+# tests/unit/test_advice_service.py
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+
+from app.services.advice import AdviceService, AdviceCategory
+
+
+class TestAdviceMatch:
+    """专家建议匹配接口测试"""
+
+    @pytest.fixture
+    def advice_service(self, db_session):
+        return AdviceService(db=db_session)
+
+    @pytest.mark.asyncio
+    async def test_match_advice_by_context(self, advice_service):
+        """测试根据上下文匹配建议"""
+        # Input
+        result = await advice_service.match_advice(
+            context={
+                "genre": "都市现实",
+                "current_chapter": 5,
+                "total_chapters": 18,
+                "issues": ["节奏过慢", "对话单一"]
+            }
+        )
+        # Expected Output
+        assert len(result["advices"]) > 0
+        for advice in result["advices"]:
+            assert "advice_id" in advice
+            assert "content" in advice
+            assert "category" in advice
+            assert "relevance_score" in advice
+            assert advice["relevance_score"] >= 0.5
+
+    @pytest.mark.asyncio
+    async def test_match_advice_priority_order(self, advice_service):
+        """测试建议按相关度排序"""
+        result = await advice_service.match_advice(
+            context={"genre": "科幻", "issues": ["世界观模糊"]}
+        )
+        scores = [a["relevance_score"] for a in result["advices"]]
+        assert scores == sorted(scores, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_no_advice_found(self, advice_service):
+        """测试无匹配建议返回空"""
+        with patch.object(advice_service, "_search_advice_db", return_value=[]):
+            result = await advice_service.match_advice(
+                context={"genre": "unknown_genre", "issues": []}
+            )
+        assert len(result["advices"]) == 0
+        assert result["fallback_used"] is True
+```
+
+#### 2.12.2 test_conflict_detect - 建议冲突检测
+```python
+class TestConflictDetect:
+    """建议冲突检测接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicting_advice(self, advice_service):
+        """测试检测互相冲突的建议"""
+        advices = [
+            {"advice_id": "adv_001", "content": "加快叙事节奏", "category": "pacing"},
+            {"advice_id": "adv_002", "content": "增加细节描写放慢节奏", "category": "pacing"},
+        ]
+        result = await advice_service.detect_conflicts(advices)
+        assert result["has_conflicts"] is True
+        assert len(result["conflict_pairs"]) >= 1
+        assert result["conflict_pairs"][0]["advice_a"] == "adv_001"
+        assert result["conflict_pairs"][0]["advice_b"] == "adv_002"
+        assert "resolution" in result["conflict_pairs"][0]
+
+    @pytest.mark.asyncio
+    async def test_no_conflicts(self, advice_service):
+        """测试无冲突建议"""
+        advices = [
+            {"advice_id": "adv_003", "content": "增加对话", "category": "dialogue"},
+            {"advice_id": "adv_004", "content": "完善世界观", "category": "worldbuilding"},
+        ]
+        result = await advice_service.detect_conflicts(advices)
+        assert result["has_conflicts"] is False
+        assert len(result["conflict_pairs"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_conflict_auto_resolution(self, advice_service):
+        """测试冲突自动解决策略"""
+        advices = [
+            {"advice_id": "adv_005", "content": "缩短章节", "category": "structure", "priority": 1},
+            {"advice_id": "adv_006", "content": "扩展章节内容", "category": "structure", "priority": 2},
+        ]
+        result = await advice_service.detect_conflicts(advices, auto_resolve=True)
+        assert result["has_conflicts"] is True
+        assert result["resolved"] is True
+        assert result["kept_advice"]["advice_id"] == "adv_005"  # 高优先级保留
+```
+
+#### 2.12.3 test_uniqueness_check - 组合唯一性检查
+```python
+class TestUniquenessCheck:
+    """组合唯一性检查接口测试"""
+
+    @pytest.mark.asyncio
+    async def test_unique_combination(self, advice_service):
+        """测试唯一的建议组合"""
+        combination = {
+            "genre": "都市现实",
+            "style": "轻松幽默",
+            "structure": "三幕式",
+            "pacing": "快节奏"
+        }
+        result = await advice_service.check_uniqueness(combination)
+        assert result["is_unique"] is True
+        assert result["similarity_score"] < 0.8
+
+    @pytest.mark.asyncio
+    async def test_duplicate_combination_detected(self, advice_service):
+        """测试检测到重复组合"""
+        combination = {
+            "genre": "都市现实",
+            "style": "轻松幽默",
+            "structure": "三幕式",
+            "pacing": "快节奏"
+        }
+        # 第一次注册
+        await advice_service.register_combination(combination, novel_id="novel_001")
+        # 第二次检查唯一性
+        result = await advice_service.check_uniqueness(combination)
+        assert result["is_unique"] is False
+        assert result["similar_novels"] is not None
+        assert len(result["similar_novels"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_similar_but_different_combination(self, advice_service):
+        """测试相似但不完全相同的组合"""
+        await advice_service.register_combination(
+            {"genre": "都市现实", "style": "轻松幽默", "structure": "三幕式", "pacing": "快节奏"},
+            novel_id="novel_002"
+        )
+        result = await advice_service.check_uniqueness({
+            "genre": "都市现实",
+            "style": "轻松幽默",
+            "structure": "五幕式",  # 不同的结构
+            "pacing": "慢节奏"       # 不同的节奏
+        })
+        assert result["is_unique"] is True
+        assert result["similarity_score"] > 0.3  # 有一定相似度
+        assert result["similarity_score"] < 0.8  # 但不算重复
+
+    @pytest.mark.asyncio
+    async def test_uniqueness_with_empty_db(self, advice_service):
+        """测试空数据库时所有组合均唯一"""
+        result = await advice_service.check_uniqueness({
+            "genre": "任意", "style": "任意"
+        })
+        assert result["is_unique"] is True
+        assert result["similarity_score"] == 0.0
+```
+
 ## 3. 集成测试设计
 
 ### 3.1 完整流水线集成测试
