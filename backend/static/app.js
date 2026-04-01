@@ -7,9 +7,53 @@ let selectedAgentTab = null;
 let novelData = null;
 let runMode = "prod";
 
+// 添加调试信息
+console.log('AI小说生成Agent前端脚本加载');
+console.log('API基础路径:', API);
+console.log('当前时间:', new Date().toLocaleString());
+
 function api(path, options = {}) {
-  return fetch(API + path, { ...options, headers: { "Content-Type": "application/json", ...options.headers } })
-    .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+  return fetch(API + path, { 
+    ...options, 
+    headers: { 
+      'Content-Type': 'application/json', 
+      ...options.headers 
+    } 
+  })
+  .then(async r => {
+    if (!r.ok) {
+      // 尝试获取更详细的错误信息
+      let errorText = r.statusText || 'Unknown error';
+      try {
+        const text = await r.text();
+        if (text) {
+          try {
+            const errorData = JSON.parse(text);
+            errorText = errorData.message || errorData.error || errorText;
+          } catch {
+            errorText = text.length > 100 ? text.substring(0, 100) + '...' : text;
+          }
+        }
+      } catch {}
+      throw new Error(`请求失败 (${r.status}): ${errorText}`);
+    }
+    
+    // 检查响应内容类型
+    const contentType = r.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      // 如果不是JSON，返回文本
+      return r.text();
+    }
+    
+    return r.json();
+  })
+  .catch(err => {
+    // 处理网络错误等
+    if (err.name === 'TypeError' && err.message.includes('fetch')) {
+      throw new Error('网络错误: 无法连接到服务器');
+    }
+    throw err;
+  });
 }
 
 function setRefreshInterval(sec) {
@@ -84,7 +128,16 @@ function refreshAll() {
       el.addEventListener("click", () => { currentTaskId = el.dataset.id; selectedAgentTab = null; refreshAll(); document.getElementById("btnStart").disabled = false; });
     });
     list.querySelectorAll(".task-start").forEach(el => {
-      el.addEventListener("click", (e) => { e.stopPropagation(); const id = el.dataset.id; api("/tasks/" + id + "/start", { method: "POST" }).then(() => { currentTaskId = id; refreshAll(); }).catch(err => alert(err.message || "启动失败")); });
+      el.addEventListener("click", (e) => { 
+        e.stopPropagation(); 
+        const id = el.dataset.id; 
+        api("/tasks/" + id + "/start", { method: "POST" })
+          .then(() => { 
+            currentTaskId = id; 
+            refreshAll(); 
+          })
+          .catch(err => showError(err.message || "启动失败")); 
+      });
     });
     list.querySelectorAll(".task-delete").forEach(el => {
       el.addEventListener("click", (e) => {
@@ -94,7 +147,7 @@ function refreshAll() {
         fetch(API + "/tasks/" + id, { method: "DELETE" })
           .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
           .then(() => { if (currentTaskId === id) currentTaskId = null; refreshAll(); })
-          .catch(err => alert(err.message || "删除失败"));
+          .catch(err => showError(err.message || "删除失败"));
       });
     });
   }).catch(() => {});
@@ -108,7 +161,11 @@ function renderTaskStatus(task) {
   } else if (status === "failed" && task.error) {
     label = "failed（" + task.error + "）";
   }
-  const mode = task.run_mode === "test" ? "测试6章" : "正式";
+  let mode = "正式";
+  if (task.run_mode === "test") {
+    const ch = task.test_mode_chapters || 6;
+    mode = "测试" + ch + "章";
+  }
   return escapeHtml(label + " · " + mode);
 }
 
@@ -325,43 +382,74 @@ document.getElementById("btnStart").addEventListener("click", () => {
         else currentTaskId = tid;
         refreshAll();
       })
-      .catch(err => alert(err.message || "启动失败"));
+      .catch(err => showError(err.message || "启动失败"));
   if (currentTaskId) {
     doStart(currentTaskId);
   } else {
     const name = document.getElementById("taskName").value.trim() || "自动生成小说";
     api("/tasks", { method: "POST", body: JSON.stringify({ name }) })
       .then(d => { currentTaskId = d.task_id; return doStart(d.task_id); })
-      .catch(err => alert(err.message || "创建或启动失败"));
+      .catch(err => showError(err.message || "创建或启动失败"));
   }
 });
 document.getElementById("chkAutoRun").addEventListener("change", function() {
   api("/tasks/auto-run", { method: "POST", body: JSON.stringify({ auto_run: this.checked }) }).catch(() => {});
 });
 document.getElementById("btnStop").addEventListener("click", () => {
-  api("/tasks/stop", { method: "POST" }).then(() => refreshAll()).catch(alert);
+  api("/tasks/stop", { method: "POST" }).then(() => refreshAll()).catch(showError);
 });
 document.getElementById("btnPause").addEventListener("click", () => {
-  api("/tasks/pause", { method: "POST" }).then(() => refreshAll()).catch(alert);
+  api("/tasks/pause", { method: "POST" }).then(() => refreshAll()).catch(showError);
 });
 document.getElementById("btnResume").addEventListener("click", () => {
-  api("/tasks/resume", { method: "POST" }).then(() => refreshAll()).catch(alert);
+  api("/tasks/resume", { method: "POST" }).then(() => refreshAll()).catch(showError);
 });
+// 增强的错误显示函数
+function showError(message) {
+  console.error('前端错误:', message);
+  
+  // 尝试使用alert，但如果被阻止则使用控制台
+  try {
+    alert('错误: ' + message);
+  } catch (e) {
+    console.error('无法显示alert:', e);
+    // 可以在这里添加其他错误显示方式，如页面内提示
+  }
+}
+
 document.getElementById("btnCreateAndStart").addEventListener("click", () => {
-  const name = document.getElementById("taskName").value.trim() || "新小说任务";
-  api("/tasks", { method: "POST", body: JSON.stringify({ name }) })
-    .then(d => {
-      currentTaskId = d.task_id;
-      return api("/tasks/" + d.task_id + "/start", { method: "POST" });
-    })
-    .then(() => refreshAll())
-    .catch(err => alert(err.message || "创建或启动失败"));
+  const nameInput = document.getElementById("taskName");
+  const name = nameInput ? nameInput.value.trim() : "新小说任务";
+  
+  console.log('开始创建并启动任务:', name);
+  
+  api("/tasks", { 
+    method: "POST", 
+    body: JSON.stringify({ name }) 
+  })
+  .then(d => {
+    console.log('任务创建成功:', d);
+    if (!d.task_id) {
+      throw new Error('服务器返回的任务数据不完整');
+    }
+    
+    currentTaskId = d.task_id;
+    return api("/tasks/" + d.task_id + "/start", { method: "POST" });
+  })
+  .then(startResult => {
+    console.log('任务启动成功:', startResult);
+    refreshAll();
+  })
+  .catch(err => {
+    console.error('创建并启动任务失败:', err);
+    showError(err.message || "创建并启动失败");
+  });
 });
 document.getElementById("btnToggleMode").addEventListener("click", () => {
   const next = runMode === "test" ? "prod" : "test";
   api("/run-mode", { method: "POST", body: JSON.stringify({ mode: next }) })
     .then(() => refreshAll())
-    .catch(err => alert(err.message || "切换模式失败"));
+    .catch(err => showError(err.message || "切换模式失败"));
 });
 
 document.getElementById("agentSelect").addEventListener("change", () => {
@@ -387,5 +475,39 @@ function escapeHtml(s) {
 api("/config").then(c => {
   if (c.refresh_interval_seconds) setRefreshInterval(c.refresh_interval_seconds);
 }).catch(() => setRefreshInterval(30));
+
+// Theme selection UI
+(function initThemeUI() {
+  api("/trend/genres").then(d => {
+    const sel = document.getElementById("themeSelect");
+    if (!sel) return;
+    (d.all_genres || []).forEach(g => {
+      const opt = document.createElement("option");
+      opt.value = g;
+      opt.textContent = g + ((d.recent_used || []).includes(g) ? " (近期已用)" : "");
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+  api("/trend/manual-theme").then(d => {
+    const st = document.getElementById("themeStatus");
+    if (st && d.theme) st.textContent = "已设定: " + d.theme;
+  }).catch(() => {});
+  const btn = document.getElementById("btnSetTheme");
+  if (btn) btn.addEventListener("click", () => {
+    const sel = document.getElementById("themeSelect");
+    const theme = sel ? sel.value : "";
+    if (!theme) {
+      api("/trend/manual-theme", { method: "DELETE" }).then(() => {
+        const st = document.getElementById("themeStatus");
+        if (st) st.textContent = "已清除，将自动随机选题";
+      });
+      return;
+    }
+    api("/trend/set-theme", { method: "POST", body: JSON.stringify({ theme }) }).then(() => {
+      const st = document.getElementById("themeStatus");
+      if (st) st.textContent = "已设定: " + theme;
+    }).catch(err => showError(err.message || "设定失败"));
+  });
+})();
 
 refreshAll();

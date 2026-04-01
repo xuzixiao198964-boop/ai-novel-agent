@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
+import sys
+from pathlib import Path
+
 import paramiko
 
-HOST = "104.244.90.202"
-PORT = 22
-USER = "root"
-PASSWORD = "C66ffUMycDn2"
+_DEPLOY = Path(__file__).resolve().parent
+if str(_DEPLOY) not in sys.path:
+    sys.path.insert(0, str(_DEPLOY))
+from ssh_env import require_ssh_password, ssh_host, ssh_port, ssh_user
 
 
 def main() -> None:
+    host, port, user, password = ssh_host(), ssh_port(), ssh_user(), require_ssh_password()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     last_err = None
     for _ in range(3):
         try:
-            c.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=60)
+            c.connect(host, port=port, username=user, password=password, timeout=60)
             last_err = None
             break
         except Exception as e:

@@ -8,12 +8,15 @@
 - 可选删除 /opt/ai-novel-agent 中的 docker 文件（不删代码目录）
 """
 
+import sys
+from pathlib import Path
+
 import paramiko
 
-HOST = "104.244.90.202"
-PORT = 22
-USER = "root"
-PASSWORD = "C66ffUMycDn2"
+_DEPLOY = Path(__file__).resolve().parent
+if str(_DEPLOY) not in sys.path:
+    sys.path.insert(0, str(_DEPLOY))
+from ssh_env import require_ssh_password, ssh_host, ssh_port, ssh_user
 
 
 def run(c: paramiko.SSHClient, cmd: str) -> str:
@@ -24,9 +27,10 @@ def run(c: paramiko.SSHClient, cmd: str) -> str:
 
 
 def main() -> None:
+    host, port, user, password = ssh_host(), ssh_port(), ssh_user(), require_ssh_password()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=60)
+    c.connect(host, port=port, username=user, password=password, timeout=60)
 
     cmds = [
         "cd /opt/ai-novel-agent 2>/dev/null && (docker compose down -v || docker-compose down -v || true) || true",

@@ -1,0 +1,11 @@
+{
+  "description": "创新尝试，允许一定风险",
+  "total_score_threshold": 70,
+  "dimension_requirements": {
+    "structure": 65,
+    "character": 70,
+    "plot": 60,
+    "market": 55,
+    "innovation": 65
+  }
+}

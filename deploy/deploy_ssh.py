@@ -1,36 +1,56 @@
 # -*- coding: utf-8 -*-
 """
-通过 SSH 自动部署到 Ubuntu 服务器（无需手动输入密码）。
+通过 SSH 自动部署到 Ubuntu 服务器。
 上传超过约 2 分钟则分多段上传，每段新建连接，直至传完。
-用法: python deploy/deploy_ssh.py
+
+用法（在仓库根目录）:
+  set DEPLOY_SSH_PASSWORD=你的SSH密码
+  set LLM_API_KEY=你的DeepSeek密钥
+  python deploy/deploy_ssh.py
+
+凭据仅从环境变量读取，见 deploy/ssh_env.py、deploy/README.md。
 """
 import os
 import sys
 import time
 from pathlib import Path
 
-# 服务器信息
-HOST = "104.244.90.202"
-USER = "root"
-PASSWORD = "C66ffUMycDn2"
+_DEPLOY = Path(__file__).resolve().parent
+if str(_DEPLOY) not in sys.path:
+    sys.path.insert(0, str(_DEPLOY))
+from ssh_env import require_llm_api_key, require_ssh_password, ssh_host, ssh_port, ssh_user
+
 REMOTE_DIR = "/opt/ai-novel-agent"
-PORT = 22
 
 # 每段上传最长时长（秒），超过则本段结束后下一段用新连接
 CHUNK_MAX_SECONDS = 15
 
-# DeepSeek API（部署时写入服务器 .env）
+# DeepSeek API（部署时写入服务器 .env，密钥来自环境变量）
 LLM_API_BASE = "https://api.deepseek.com"
-LLM_API_KEY = "sk-7bfa809eeac74e168ee642d4e71b0958"
 LLM_MODEL = "deepseek-chat"
+
+_ssh_cfg: dict | None = None
+
+
+def _creds() -> dict:
+    global _ssh_cfg
+    if _ssh_cfg is None:
+        _ssh_cfg = {
+            "host": ssh_host(),
+            "port": ssh_port(),
+            "user": ssh_user(),
+            "password": require_ssh_password(),
+        }
+    return _ssh_cfg
 
 
 def run_ssh(cmd: str, check: bool = True):
     """执行远程命令（使用 paramiko）"""
     import paramiko
+    c = _creds()
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=15)
+    client.connect(c["host"], port=c["port"], username=c["user"], password=c["password"], timeout=15)
     stdin, stdout, stderr = client.exec_command(cmd, get_pty=False)
     code = stdout.channel.recv_exit_status()
     out = stdout.read().decode("utf-8", errors="replace")
@@ -112,8 +132,9 @@ def main():
     print(f"   backend 文件数: {len(all_backend)}, 根目录文件数: {len(root_files)}")
 
     def open_sftp():
-        trans = paramiko.Transport((HOST, PORT))
-        trans.connect(username=USER, password=PASSWORD)
+        cr = _creds()
+        trans = paramiko.Transport((cr["host"], cr["port"]))
+        trans.connect(username=cr["user"], password=cr["password"])
         try:
             trans.set_keepalive(15)
         except Exception:
@@ -214,8 +235,9 @@ def main():
                     sftp, trans = open_sftp()
             if not uploaded:
                 raise RuntimeError(f"SFTP 上传失败：{local_path} -> {rpath}；{last_err}")
+        llm_key = require_llm_api_key()
         env_content = f"""LLM_API_BASE={LLM_API_BASE}
-LLM_API_KEY={LLM_API_KEY}
+LLM_API_KEY={llm_key}
 LLM_MODEL={LLM_MODEL}
 # 验证：关闭 MOCK_LLM，使用真实 LLM，尽早暴露 JSON/解析问题
 MOCK_LLM=0

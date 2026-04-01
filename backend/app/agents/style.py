@@ -60,6 +60,9 @@ STYLE_PARAMS_TEMPLATE = """# 风格参数表
 
 
 class StyleAgent(BaseAgent):
+
+    def __init__(self, task_id):
+        super().__init__(task_id)
     name = "StyleAgent"
 
     @staticmethod

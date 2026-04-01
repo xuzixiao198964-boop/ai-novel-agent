@@ -1,0 +1,11 @@
+{
+  "description": "市场成熟，读者期待高，要求严格",
+  "total_score_threshold": 85,
+  "dimension_requirements": {
+    "structure": 75,
+    "character": 80,
+    "plot": 70,
+    "market": 65,
+    "style": 75
+  }
+}

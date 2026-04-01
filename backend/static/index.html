@@ -37,6 +37,12 @@
         <button type="button" id="btnCreateTask">创建任务</button>
         <button type="button" id="btnCreateAndStart">创建并启动</button>
       </div>
+      <div class="task-actions" style="margin-top:6px;">
+        <span class="control-label">手动选题：</span>
+        <select id="themeSelect"><option value="">自动随机</option></select>
+        <button type="button" id="btnSetTheme">设定主题</button>
+        <span id="themeStatus" style="color:#888;font-size:12px;"></span>
+      </div>
       <div class="task-list-wrap">
         <ul id="taskList"></ul>
       </div>

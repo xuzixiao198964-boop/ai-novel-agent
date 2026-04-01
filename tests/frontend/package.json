@@ -1,12 +1,24 @@
 {
   "name": "ai-novel-agent-frontend-tests",
+  "version": "1.0.0",
+  "description": "Frontend tests for AI Novel Agent system",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:unit": "vitest run unit",
+    "test:integration": "vitest run integration",
+    "test:contract": "vitest run static_contract.test.js",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:all": "node run-tests.js"
   },
   "devDependencies": {
-    "vitest": "^3.0.0"
+    "vitest": "^1.6.0",
+    "@vitest/ui": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

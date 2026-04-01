@@ -1,19 +1,26 @@
 # -*- coding: utf-8 -*-
 """
 无容器部署：把 backend 代码上传到服务器，创建 venv 安装依赖，写入 .env，创建 systemd 服务并启动。
-用法：python deploy/deploy_systemd_ssh.py
+
+用法（在仓库根目录）:
+  set DEPLOY_SSH_PASSWORD=...
+  set LLM_API_KEY=...
+  python deploy/deploy_systemd_ssh.py
+
+凭据见 deploy/ssh_env.py、deploy/README.md。
 """
 
 import os
+import sys
 import time
 from pathlib import Path
 
 import paramiko
 
-HOST = "104.244.90.202"
-PORT = 22
-USER = "root"
-PASSWORD = "v9wSxMxg92dp"
+_DEPLOY = Path(__file__).resolve().parent
+if str(_DEPLOY) not in sys.path:
+    sys.path.insert(0, str(_DEPLOY))
+from ssh_env import require_ssh_password, ssh_host, ssh_port, ssh_user
 
 REMOTE_DIR = "/opt/ai-novel-agent"
 REMOTE_BACKEND = f"{REMOTE_DIR}/backend"
@@ -21,8 +28,21 @@ VENV_DIR = f"{REMOTE_DIR}/venv"
 
 # DeepSeek（OpenAI 兼容）
 LLM_API_BASE = "https://api.deepseek.com"
-LLM_API_KEY = ""  # 允许从本机环境变量读取
 LLM_MODEL = "deepseek-chat"
+
+_ssh_cfg: dict | None = None
+
+
+def _creds() -> dict:
+    global _ssh_cfg
+    if _ssh_cfg is None:
+        _ssh_cfg = {
+            "host": ssh_host(),
+            "port": ssh_port(),
+            "user": ssh_user(),
+            "password": require_ssh_password(),
+        }
+    return _ssh_cfg
 
 
 def run_ssh(c: paramiko.SSHClient, cmd: str, check: bool = True) -> str:
@@ -36,9 +56,10 @@ def run_ssh(c: paramiko.SSHClient, cmd: str, check: bool = True) -> str:
 
 
 def open_ssh() -> paramiko.SSHClient:
+    cr = _creds()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=60)
+    c.connect(cr["host"], port=cr["port"], username=cr["user"], password=cr["password"], timeout=60)
     return c
 
 
@@ -75,7 +96,7 @@ def main() -> None:
     if not req.exists():
         raise RuntimeError("backend/requirements.txt 不存在")
 
-    api_key = os.environ.get("LLM_API_KEY", "").strip() or LLM_API_KEY
+    api_key = os.environ.get("LLM_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("缺少 LLM_API_KEY：请在本机环境变量 LLM_API_KEY 提供")
 

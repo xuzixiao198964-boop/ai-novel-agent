@@ -24,21 +24,41 @@ def _get_outline(task_id: str):
     return []
 
 
+def _extract_spine_for_chapter(spine_md: str, ch: int) -> str:
+    """从故事总纲中提取与当前章节相关的段落"""
+    if not spine_md:
+        return ""
+    lines = spine_md.split("\n")
+    ch_marker = f"第{ch}章"
+    ch_marker2 = f"第 {ch} 章"
+    found = []
+    capturing = False
+    for ln in lines:
+        if ch_marker in ln or ch_marker2 in ln:
+            capturing = True
+        elif capturing and ln.startswith("#"):
+            break
+        if capturing:
+            found.append(ln)
+    if found:
+        return "\n".join(found)[:1500]
+    batch_idx = (ch - 1) // 3
+    start_ln = batch_idx * 20
+    end_ln = min(start_ln + 30, len(lines))
+    return "\n".join(lines[start_ln:end_ln])[:1500]
+
+
 class WriterAgent(BaseAgent):
     name = "WriterAgent"
 
     def __init__(self, task_id: str, start_chapter: int | None = None, end_chapter: int | None = None):
         super().__init__(task_id)
-        self.start_chapter = start_chapter  # 仅重写从该章到结尾时使用
-        self.end_chapter = end_chapter  # 若与 start_chapter 同时指定，则只写 [start_chapter, end_chapter] 闭区间
+        self.start_chapter = start_chapter
+        self.end_chapter = end_chapter
 
     def run(self) -> None:
         try:
             def _extract_audit_segments_for_ch(audit_text: str, chapter_index: int) -> str:
-                """
-                从审计避免项文本中抽取与指定章节相关的片段。
-                以“第X章”作为锚点切段，避免整份文本截断后导致关键信息缺失。
-                """
                 if not audit_text.strip():
                     return ""
                 chap_re = re.compile(r"第\s*(\d+)\s*章")
@@ -59,13 +79,36 @@ class WriterAgent(BaseAgent):
                     if seg:
                         segments.append(seg)
                 joined = "\n".join(segments).strip()
-                # 保底：若没抽到指定章节片段，则退化使用开头部分
                 if not joined:
                     joined = audit_text.strip()[:800]
                 return joined
 
+            def _load_prev_chapter_half(ch_num: int) -> str:
+                """加载上一章后半段原文（约50%），用于章节衔接"""
+                if ch_num <= 1:
+                    return ""
+                prev_path = _task_dir(self.task_id) / "output" / "chapters" / f"ch_{ch_num-1:02d}.md"
+                if not prev_path.exists():
+                    return ""
+                prev_text = prev_path.read_text(encoding="utf-8", errors="replace")
+                if len(prev_text) < 500:
+                    return prev_text
+                half = len(prev_text) // 2
+                return prev_text[half:]
+
+            def _load_opening_chapters() -> str:
+                """加载前两章全文作为引子，为后续章节提供故事基调和人物初印象"""
+                chapters_dir = _task_dir(self.task_id) / "output" / "chapters"
+                parts = []
+                for i in (1, 2):
+                    p = chapters_dir / f"ch_{i:02d}.md"
+                    if p.exists():
+                        text = p.read_text(encoding="utf-8", errors="replace")
+                        if text.strip():
+                            parts.append(f"--- 第{i}章 ---\n{text.strip()}")
+                return "\n\n".join(parts)
+
             outline_list = _get_outline(self.task_id)
-            # 章节数由大纲/目录决定；若配置有 override 则用配置（如测试时 TOTAL_CHAPTERS=5）
             total_chapters = getattr(settings, "total_chapters", 0) or 0
             if total_chapters <= 0:
                 total_chapters = max(1, len(outline_list))
@@ -74,12 +117,10 @@ class WriterAgent(BaseAgent):
             if max_write > 0:
                 total_chapters = min(total_chapters, max_write)
             words_per_chapter = getattr(settings, "words_per_chapter", 10000) or 10000
-            # 优先使用趋势分析中的建议单章字数
             trend_json = _task_dir(self.task_id) / "output" / "trend" / "trend_analysis.json"
             if trend_json.exists():
                 try:
-                    import json as _json
-                    td = _json.loads(trend_json.read_text(encoding="utf-8"))
+                    td = json.loads(trend_json.read_text(encoding="utf-8"))
                     w = int(td.get("suggested_words_per_chapter") or 0)
                     if 500 <= w <= 10000:
                         words_per_chapter = w
@@ -89,18 +130,14 @@ class WriterAgent(BaseAgent):
             start = self.start_chapter or 1
             end = self.end_chapter if getattr(self, "end_chapter", None) is not None else total_chapters
             end = min(end, total_chapters)
-            if start > 1:
-                # 重写从 start 到结尾，需要上一章摘要
-                prev_path = _task_dir(self.task_id) / "output" / "chapters" / f"ch_{start-1:02d}.md"
-                if prev_path.exists():
-                    prev_text = prev_path.read_text(encoding="utf-8")[:2000]
-                    prev_summary = prev_text[-800:] if len(prev_text) > 800 else prev_text
-                else:
-                    prev_summary = ""
-            else:
-                prev_summary = ""
 
             task_d = _task_dir(self.task_id)
+
+            story_spine_md = ""
+            spine_file = task_d / "output" / "planner" / "故事总纲.md"
+            if spine_file.exists():
+                story_spine_md = spine_file.read_text(encoding="utf-8", errors="replace")
+
             plan_md = ""
             plan_file = task_d / "output" / "planner" / "策划案.md"
             if plan_file.exists():
@@ -113,7 +150,6 @@ class WriterAgent(BaseAgent):
             audit_avoid = ""
             audit_avoid_file = task_d / "output" / "audit" / "rewrite_avoid.md"
             if audit_avoid_file.exists():
-                # 本次审计文件体量通常不大，避免过早截断导致后续章节修复缺失
                 audit_avoid = audit_avoid_file.read_text(encoding="utf-8", errors="replace")[:8000]
             chapter_feedback = ""
             if start == end and start >= 1:
@@ -148,7 +184,6 @@ class WriterAgent(BaseAgent):
                 connection = ch_outline.get("connection", "承接上章")
                 title = ch_outline.get("title", f"第{ch}章")
 
-                # 本章反馈（打分/审计）：用于判断是否走修订模式
                 ch_feedback_path = task_d / "output" / "score" / f"chapter_feedback_ch_{ch:02d}.md"
                 ch_feedback = ""
                 if ch_feedback_path.exists():
@@ -158,35 +193,14 @@ class WriterAgent(BaseAgent):
                 if existing_ch_path.exists():
                     existing_content = existing_ch_path.read_text(encoding="utf-8", errors="replace")
                 feedback_combined = (ch_feedback or "") + " " + (audit_avoid or "")
-                # 当审计避免项包含“矛盾/混淆/遗漏/断裂/不完整”等结构性问题时，
-                # 只做局部修改往往无法真正修复（容易留下残留错误），改为整章重写更稳。
-                # 注意：审计文本里“衔接/过渡/跳跃”等也常伴随“断裂/漏洞”出现，这里一并收紧触发条件。
                 force_full_rewrite = any(
                     k in feedback_combined
                     for k in (
-                        "内部矛盾",
-                        "逻辑矛盾",
-                        "矛盾",
-                        "混淆",
-                        "遗漏",
-                        "未回收",
-                        "未完成",
-                        "不完整",
-                        "断裂",
-                        "衔接",
-                        "过渡",
-                        "跳跃",
-                        "生硬",
-                        "漏洞",
-                        "伏笔",
-                        "解释",
-                        "解释缺失",
-                        "规则",
-                        "触发条件",
-                        "限制范围",
-                        "时间线",
-                        "数量",
-                        "平台概念",
+                        "内部矛盾", "逻辑矛盾", "矛盾", "混淆", "遗漏",
+                        "未回收", "未完成", "不完整", "断裂", "衔接",
+                        "过渡", "跳跃", "生硬", "漏洞", "伏笔",
+                        "解释", "解释缺失", "规则", "触发条件",
+                        "限制范围", "时间线", "数量", "平台概念",
                     )
                 )
                 use_revise = bool(
@@ -195,46 +209,59 @@ class WriterAgent(BaseAgent):
                     and not force_full_rewrite
                 )
 
+                prev_half = _load_prev_chapter_half(ch)
+                spine_excerpt = _extract_spine_for_chapter(story_spine_md, ch)
+                opening_ctx = _load_opening_chapters() if ch >= 3 else ""
+
                 if use_revise:
-                    # 仅修改不通过部分，保留其余内容
+                    revise_ctx = ""
+                    if prev_half:
+                        revise_ctx = f"\n\n【上一章后半段原文（修订后开头必须承接此处）】\n{prev_half[:2500]}\n"
+                    opening_hint = ""
+                    if opening_ctx:
+                        opening_hint = f"\n\n【前两章引子（保持角色性格和世界观一致）】\n{opening_ctx[:4000]}\n"
                     user_content = (
                         f"以下为第{ch}章当前正文，审核/打分未通过。请仅根据意见修改未通过的部分，保留其余内容；若意见中明确提到章节内部逻辑矛盾则可整章重写。\n\n"
                         f"【审核/打分意见】\n{feedback_combined[:2500]}\n\n"
-                        f"【当前正文】\n{existing_content[:6000]}\n\n"
+                        f"【当前正文】\n{existing_content[:6000]}\n"
+                        f"{revise_ctx}{opening_hint}\n"
                         f"请直接输出修订后的完整正文（可含 # 第{ch}章），不要解释。字数尽量不少于 {words_per_chapter} 字。"
                     )
                     prompt = [
                         {"role": "system", "content": "你是中文网文作者。根据审核意见只修改不通过的部分，尽量保留原文；只输出修订后的完整正文，不要解释。"},
                         {"role": "user", "content": user_content},
                     ]
-                    content = llm.chat(prompt, temperature=0.5, max_tokens=8192)
+                    content = llm.chat(prompt, temperature=0.5, max_tokens=8192, timeout_s=300)
                 else:
                     audit_avoid_for_ch = _extract_audit_segments_for_ch(audit_avoid, ch)
-                    # 对同一章节的修复清单做二次截断，避免 prompt 过长影响模型重点。
                     audit_avoid_for_ch = audit_avoid_for_ch[:2200]
-                    user_content = f"""请严格按照章节目录写本小说的第{ch}章正文，要求：
-- 字数：不少于 {words_per_chapter} 字（尽量写满，保证情节完整）
-- 章节标题/核心事件：{title} — {event}
-- 章末钩子/悬念：{hook}
-- 与上章衔接：{connection}
-- 风格：节奏快、短句为主、对话占比高；开头 1–2 段要有钩子，结尾留悬念
-- 不要出现“我作为AI”等字样；只输出正文，可含 Markdown 标题“第{ch}章”和段落
-
-"""
-                    if prev_summary:
-                        user_content += f"【上一章结尾/摘要（请自然衔接）】\n{prev_summary[:600]}\n\n"
+                    user_content = (
+                        f"请严格按照章节目录写本小说的第{ch}章正文，要求：\n"
+                        f"- 字数：不少于 {words_per_chapter} 字（尽量写满，保证情节完整）\n"
+                        f"- 章节标题/核心事件：{title} — {event}\n"
+                        f"- 章末钩子/悬念：{hook}\n"
+                        f"- 与上章衔接：{connection}\n"
+                        f"- 风格：节奏快、短句为主、对话占比高；开头 1–2 段要有钩子，结尾留悬念\n"
+                        f"- 不要出现\"我作为AI\"等字样；只输出正文，可含 Markdown 标题\"第{ch}章\"和段落\n"
+                        f"- **极其重要**：本章开头必须自然承接上一章结尾的场景、对话或事件，不能跳跃或重复\n\n"
+                    )
+                    if opening_ctx:
+                        user_content += f"【前两章引子（故事基调与人物初印象，写作时须保持角色性格、语言风格、世界观设定的一致性）】\n{opening_ctx[:6000]}\n\n"
+                    if prev_half:
+                        user_content += f"【上一章后半段原文（本章开头必须直接承接此处剧情，不要重复、不要跳跃）】\n{prev_half[:3000]}\n\n"
+                    if spine_excerpt:
+                        user_content += f"【故事总纲（本章对应段落，请严格遵循）】\n{spine_excerpt}\n\n"
                     if plan_md:
-                        user_content += f"【故事设定参考】\n{plan_md[:2000]}\n\n"
+                        user_content += f"【故事设定参考（核心人设与世界观）】\n{plan_md[:2000]}\n\n"
                     if scorer_hint:
                         user_content += f"【本轮改进要求（请在本章中体现）】\n{scorer_hint[:1200]}\n\n"
                     if audit_avoid:
-                        # 将“审计避免项”明确改写为“修复清单”，避免模型误以为只是要回避表述而不做补全。
                         user_content += (
                             f"【质量审计修复清单（本章需要补全/对齐的点）】\n{audit_avoid_for_ch}\n\n"
                         )
                         user_content += (
-                            "【硬性落地要求】请把以上条目当作“必须修复清单”，逐条落实到本章正文的具体过程里（对话/动作/过渡句）。"
-                            "不要只写泛化结论；如果某条目描述的是“缺失过程”，必须在本章补齐到关键动作/关键句为止，"
+                            "【硬性落地要求】请把以上条目当作\"必须修复清单\"，逐条落实到本章正文的具体过程里（对话/动作/过渡句）。"
+                            "不要只写泛化结论；如果某条目描述的是\"缺失过程\"，必须在本章补齐到关键动作/关键句为止，"
                             "并确保下一章开头能自然接续。若某条目指出与大纲/设定矛盾（如金额、地点、人物动作），"
                             "必须改为与审计要求一致的版本。最后：章末hook必须兑现，且衔接句要能承接 connection。 \n\n"
                         )
@@ -243,24 +270,18 @@ class WriterAgent(BaseAgent):
                     user_content += "请直接输出本章正文（可先写 # 第N章 再写内容）："
 
                     prompt = [
-                        {"role": "system", "content": "你是中文网文作者，擅长快节奏爽文，严格按章节目录与衔接要求写作，输出正文不要解释。单章字数须达标。"},
+                        {"role": "system", "content": (
+                            "你是中文网文作者，擅长快节奏爽文，严格按章节目录与衔接要求写作，输出正文不要解释。单章字数须达标。"
+                            "角色名字必须严格按照策划案中的人设矩阵使用，不要自行编造新名字或改变已有角色名。"
+                        )},
                         {"role": "user", "content": user_content},
                     ]
                     if is_stop_requested():
                         self._set_failed("已按用户请求停止")
                         return
-                    content = llm.chat(prompt, temperature=0.8, max_tokens=8192)
+                    content = llm.chat(prompt, temperature=0.8, max_tokens=8192, timeout_s=300)
                 write_output_file(self.task_id, f"chapters/ch_{ch:02d}.md", content)
                 total_words += len(content)
-
-                try:
-                    sum_prompt = [
-                        {"role": "system", "content": "你只输出 2–4 句话的情节摘要，不要其他内容。"},
-                        {"role": "user", "content": f"请对以下章节内容写 2–4 句话摘要：\n{content[:2500]}"},
-                    ]
-                    prev_summary = llm.chat(sum_prompt, temperature=0.3, max_tokens=150)
-                except Exception:
-                    prev_summary = content[-1200:].replace("\n", " ") if len(content) > 1200 else content[:400].replace("\n", " ")
 
                 time.sleep(settings.step_interval_seconds or 0.2)
 

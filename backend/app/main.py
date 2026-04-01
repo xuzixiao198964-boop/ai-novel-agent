@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.host_resources import disk_info_for_path, memory_info_process_rss_mb
 from app.core.state import set_current_task_id, purge_old_completed_tasks, sync_completed_tasks_to_platform
 from app.api.routes import router
 from app.novel_platform.router import router as novel_platform_router
@@ -56,7 +57,19 @@ app.include_router(novel_platform_router, prefix="/novel-api")
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    """健康检查：对齐架构文档（裸机资源可观测、磁盘门禁）。"""
+    body: dict = {
+        "status": "ok",
+        "deployment": "modular_monolith",
+        "runtime": "bare_metal_systemd",
+    }
+    di = disk_info_for_path(settings.data_dir)
+    if di:
+        body["disk"] = di.to_dict()
+        if di.status == "critical":
+            body["status"] = "degraded"
+    body["process_rss_mb"] = memory_info_process_rss_mb()
+    return body
 
 
 # 小说阅读站静态页（需在根路径 mount 之前注册）

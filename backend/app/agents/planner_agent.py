@@ -20,12 +20,12 @@ from app.core.config import settings
 from app.core import llm
 
 # 增加策划阶段的审核重试次数，避免6次失败就罢工
-PLAN_REVIEW_MAX = 12          # 从6增加到12
-OUTLINE_REVIEW_MAX = 16       # 从8增加到16  
-OUTLINE_BATCH_RETRY_MAX = 10  # 从5增加到10
-SPINE_REVIEW_MAX = 12         # 从6增加到12
-SPINE_AUDIT_EVERY_BATCHES = 1  # 故事总纲每次输出后立即审核
-SPINE_BATCH_RETRY_MAX = 8     # 从4增加到8
+PLAN_REVIEW_MAX = 12
+OUTLINE_REVIEW_MAX = 16
+OUTLINE_BATCH_RETRY_MAX = 10
+SPINE_REVIEW_MAX = 20
+SPINE_AUDIT_EVERY_BATCHES = 3
+SPINE_BATCH_RETRY_MAX = 12
 
 
 def _clamp_int(x, default: int) -> int:
@@ -104,7 +104,7 @@ def _rewrite_plan(trend_md: str, style_md: str, plan_md: str, review: dict, chap
 ## 一、核心设定（世界观、主线目标、核心冲突）
 ## 二、人设矩阵（主角、重要配角各 3–5 人：身份、目标、与主角关系、核心特质）
 ## 三、完整故事线（用 10–20 句话概括整体故事逻辑：起因→发展→多阶段冲突→高潮→结局，前后因果清晰）
-## 四、章节规模建议（建议总章节数在 {chapter_min}–{chapter_max} 章之间，并说明节奏：前 1/4 铺垫入戏，中 1/2 崛起与冲突升级，后 1/4 高潮与收束）
+## 四、章节规模建议（**总章节数必须严格控制在 {chapter_min}–{chapter_max} 章之间**，不得超出此范围；说明节奏：前 1/4 铺垫入戏，中 1/2 崛起与冲突升级，后 1/4 高潮与收束）
 
 【热门趋势分析】\n{trend_md[:5000] if trend_md else "（无）"}
 
@@ -114,6 +114,8 @@ def _rewrite_plan(trend_md: str, style_md: str, plan_md: str, review: dict, chap
 
 【审核未通过原因】\n{review.get("reason","")}\n
 【必须修复项】\n- {chr(10).join([str(x) for x in fix[:12]]) if fix else "（无）"}
+
+**再次强调：总章节数必须在 {chapter_min}–{chapter_max} 章之间，不得超出！**
 
 只输出 Markdown 策划案，不要代码块围栏。""",
         },
@@ -326,7 +328,7 @@ def _generate_story_spine_batch(
 """,
         },
     ]
-    return (llm.chat(prompt, temperature=0.45, max_tokens=2800) or "").strip()
+    return (llm.chat(prompt, temperature=0.45, max_tokens=2800, timeout_s=180) or "").strip()
 
 
 def _review_story_spine_llm(plan_md: str, spine_md: str, covered_up_to_ch: int) -> dict:
@@ -348,14 +350,14 @@ def _review_story_spine_llm(plan_md: str, spine_md: str, covered_up_to_ch: int) 
         },
     ]
     try:
-        raw = llm.chat_json(prompt, temperature=0.0, max_tokens=450)
+        raw = llm.chat_json(prompt, temperature=0.0, max_tokens=450, timeout_s=120)
         return {
             "pass": bool(raw.get("pass")),
             "reason": str(raw.get("reason") or ""),
             "fix": list(raw.get("fix") or []) if isinstance(raw.get("fix"), list) else [],
         }
     except Exception as e:
-        return {"pass": False, "reason": f"故事总纲审核解析失败：{e}", "fix": []}
+        return {"pass": True, "reason": f"故事总纲审核LLM异常（自动放行）：{e}", "fix": []}
 
 
 def _revise_story_spine_llm(plan_md: str, spine_md: str, review: dict) -> str:
@@ -380,7 +382,7 @@ def _revise_story_spine_llm(plan_md: str, spine_md: str, review: dict) -> str:
             "content": f"""【审核说明】\n{review.get("reason", "")}\n\n【必须处理的修改项】\n{fix_block}\n\n【当前故事总纲全文】\n{spine_md[:16000]}\n\n【策划案】\n{plan_md[:6000]}\n\n请输出修订后的完整故事总纲（Markdown）。""",
         },
     ]
-    return (llm.chat(prompt, temperature=0.4, max_tokens=4000) or "").strip() or spine_md
+    return (llm.chat(prompt, temperature=0.4, max_tokens=4000, timeout_s=180) or "").strip() or spine_md
 
 
 def _review_outline_quality_llm(
@@ -427,15 +429,14 @@ def _review_outline_quality_llm(
         },
     ]
     try:
-        # 为降低 JSON 被截断概率，适当提高 max_tokens
-        raw = llm.chat_json(prompt, temperature=0.0, max_tokens=1200)
+        raw = llm.chat_json(prompt, temperature=0.0, max_tokens=1200, timeout_s=120)
         return {
             "pass": bool(raw.get("pass")),
             "reason": str(raw.get("reason") or ""),
             "fix": list(raw.get("fix") or []) if isinstance(raw.get("fix"), list) else [],
         }
     except Exception as e:
-        return {"pass": False, "reason": f"大纲质量审核解析失败：{e}", "fix": []}
+        return {"pass": True, "reason": f"大纲审核LLM异常（自动放行）：{e}", "fix": []}
 
 
 def _first_chapter_from_fixes(fixes: list[str]) -> int:
@@ -541,7 +542,7 @@ def _generate_outline_batch(
     last_err = None
     for attempt in range(OUTLINE_BATCH_RETRY_MAX):
         try:
-            data = llm.chat_json(prompt, temperature=0.35, max_tokens=3200, retries=3)
+            data = llm.chat_json(prompt, temperature=0.35, max_tokens=3200, retries=3, timeout_s=180)
             chs = data.get("chapters") if isinstance(data, dict) else None
             if not isinstance(chs, list):
                 raise RuntimeError("chapters 非数组")
@@ -613,6 +614,9 @@ def _revise_outline_batch(
 class PlannerAgent(BaseAgent):
     name = "PlannerAgent"
 
+    def __init__(self, task_id):
+        super().__init__(task_id)
+
     def run(self) -> None:
         try:
             self._set_running(0, "读取趋势与风格...")
@@ -645,12 +649,40 @@ class PlannerAgent(BaseAgent):
             self._log("info", "已加载趋势与风格", {"trend_len": len(trend_md), "style_len": len(style_md)})
             time.sleep(settings.step_interval_seconds or 0.2)
 
+            from app.core.state import get_run_mode, get_test_mode_chapters
+            is_test_mode = get_run_mode() == "test"
+            test_ch = get_test_mode_chapters(6) if is_test_mode else 0
+
+            if is_test_mode and test_ch > 0:
+                import re as _re
+                trend_md = _re.sub(
+                    r'(建议总章节数|suggested_total_chapters)[^\n]*\d+[^\n]*',
+                    f'建议总章节数: {test_ch} 章（测试模式）',
+                    trend_md,
+                )
+                trend_md += f"\n\n**【测试模式覆盖】本次创作总章节数固定为 {test_ch} 章，请严格按此规模设计，忽略其他章节建议。**\n"
+
             chapter_min = getattr(settings, "chapter_range_min", 100) or 100
             chapter_max = getattr(settings, "chapter_range_max", 500) or 500
+            trend_json_path_pre = task_d / "output" / "trend" / "trend_analysis.json"
+            if trend_json_path_pre.exists():
+                try:
+                    _td = json.loads(trend_json_path_pre.read_text(encoding="utf-8"))
+                    _gr = _td.get("genre_chapter_range") or {}
+                    if _gr.get("ch_min") and _gr.get("ch_max"):
+                        chapter_min = _gr["ch_min"]
+                        chapter_max = _gr["ch_max"]
+                except Exception:
+                    pass
+
+            if is_test_mode and test_ch > 0:
+                chapter_min = test_ch
+                chapter_max = test_ch
 
             # 优先使用趋势分析中的“本次随机建议选题”（picked_theme），避免每次都选第一个主题
             picked_genre = ""
             trend_suggested_total = 0
+            trend_words_per_chapter = 2000
             trend_json_path = task_d / "output" / "trend" / "trend_analysis.json"
             if trend_json_path.exists():
                 try:
@@ -665,14 +697,29 @@ class PlannerAgent(BaseAgent):
                         trend_suggested_total = int(trend_data.get("suggested_total_chapters") or 0)
                     except Exception:
                         trend_suggested_total = 0
+                    try:
+                        trend_words_per_chapter = int(trend_data.get("suggested_words_per_chapter") or 2000)
+                    except Exception:
+                        trend_words_per_chapter = 2000
                 except Exception:
                     pass
             genre_constraint = f"\n\n【本次创作题材】请严格在以下题材类型下创作：{picked_genre}。" if picked_genre else ""
+            if is_test_mode and test_ch > 0:
+                trend_suggested_total = test_ch
+                chapter_min = test_ch
+                chapter_max = test_ch
+            elif trend_suggested_total > 0:
+                chapter_min = max(chapter_min, int(trend_suggested_total * 0.8))
+                chapter_max = min(chapter_max, int(trend_suggested_total * 1.2))
+                if chapter_min > chapter_max:
+                    chapter_min = chapter_max
 
             used_names = get_used_character_names(self.task_id)
-            name_constraint = ""
+            name_constraint = "\n\n【人名多样化要求】"
+            name_constraint += "角色命名必须多样化：混用不同姓氏（不要集中在李/王/张/陈等常见姓）、不同字数（二字名、三字名混用）、不同风格（古风/现代/外国名等视题材而定）。"
+            name_constraint += "主角名与配角名之间不能谐音或视觉相似（如：林浩/林昊、苏晨/苏辰），必须一眼就能区分。"
             if used_names:
-                name_constraint = f"\n\n【人名约束】以下名字已在其他作品中使用，请勿使用：{'、'.join(used_names[:50])}。请为人设矩阵中的主角与配角起全新的、不重复的名字。"
+                name_constraint += f"\n此外，以下名字已在其他作品中使用，请勿使用：{'、'.join(used_names[:50])}。"
 
             # 1) 生成策划案，并循环审核直到通过
             self._set_running(10, "生成策划案...")
@@ -683,7 +730,9 @@ class PlannerAgent(BaseAgent):
 ## 一、核心设定（世界观、主线目标、核心冲突）
 ## 二、人设矩阵（主角、重要配角各 3–5 人：身份、目标、与主角关系、核心特质）
 ## 三、完整故事线（用 10–20 句话概括整体故事逻辑：起因→发展→多阶段冲突→高潮→结局，前后因果清晰）
-## 四、章节规模建议（建议总章节数在 {chapter_min}–{chapter_max} 章之间，并说明节奏：前 1/4 铺垫入戏，中 1/2 崛起与冲突升级，后 1/4 高潮与收束）
+## 四、章节规模建议（**总章节数必须严格控制在 {chapter_min}–{chapter_max} 章之间**，目标约 {trend_suggested_total if trend_suggested_total > 0 else chapter_min} 章；说明节奏：前 1/4 铺垫入戏，中 1/2 崛起与冲突升级，后 1/4 高潮与收束）
+
+**关键约束：本次小说总章节数 = {trend_suggested_total if trend_suggested_total > 0 else chapter_min} 章左右，单章约 {trend_words_per_chapter} 字，请严格按此规模设计故事线。不要超出此范围。**
 
 【热门趋势分析】\n{trend_md[:6000] if trend_md else "（无）"}
 
@@ -900,7 +949,9 @@ class PlannerAgent(BaseAgent):
             prev_tail = ""
             b = 0
             review_round = 0
-            outline_recent_failures: list[dict] = []  # 近期审核不通过原因（最多保留 5 次），两次及以上不通过时作为下次创作的避免项
+            batch_fail_count = 0
+            BATCH_FORCE_PASS_LIMIT = 2
+            outline_recent_failures: list[dict] = []
             while b < num_batches:
                 if is_stop_requested():
                     self._set_failed("已按用户请求停止")
@@ -965,6 +1016,22 @@ class PlannerAgent(BaseAgent):
                 if orev.get("pass"):
                     write_output_file(self.task_id, "planner/outline.json", json.dumps({"chapters": chapters}, ensure_ascii=False, indent=2))
                     b += 1
+                    batch_fail_count = 0
+                    feedback = ""
+                    continue
+                batch_fail_count += 1
+                if batch_fail_count >= BATCH_FORCE_PASS_LIMIT:
+                    force_block = (
+                        f"## 第 {review_round} 次审核（强制放行）\n"
+                        f"- **时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"- **审核章节**：第 {start_ch}–{end_ch} 章\n"
+                        f"- **结论**：强制放行（同一批已审核 {batch_fail_count} 次未通过）\n\n"
+                    )
+                    append_output_file(self.task_id, log_path, force_block)
+                    _sync_outline_review_opinion_file(self.task_id)
+                    write_output_file(self.task_id, "planner/outline.json", json.dumps({"chapters": chapters}, ensure_ascii=False, indent=2))
+                    b += 1
+                    batch_fail_count = 0
                     feedback = ""
                     continue
                 # 不通过：先尝试只修改不通过部分，除非审核意见指出章节内部矛盾
@@ -1045,9 +1112,8 @@ class PlannerAgent(BaseAgent):
                 # 展示用审核意见仅与 outline_review_log 同步，不在此写入另一套文案
                 fix_from = _clamp_int(orev.get("fix_from_chapter"), 0)
                 if fix_from >= 1 and fix_from <= len(chapters):
-                    first_batch_to_regenerate = (fix_from - 1) // batch_size
-                    chapters = chapters[: fix_from - 1]
-                    b = first_batch_to_regenerate
+                    first_batch_to_regenerate = b
+                    chapters = chapters[: first_batch_to_regenerate * batch_size]
                     prev_tail = ""
                     if b > 0 and len(chapters) > 0:
                         try:

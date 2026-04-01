@@ -62,7 +62,7 @@ force_*.py
 simple_*.py
 direct_*.py
 setup_*.py
-verify_*.py
+/verify_*.py
 restart_service.py
 stop_auto_run.py
 upload_to_server.ps1
@@ -108,3 +108,51 @@ credentials.json
 *.pem
 *.key
 *.crt
+
+# 本地运维脚本（常含 SSH/API 明文，勿入库；请用环境变量 + deploy/ 下脚本）
+_*.py
+
+# 编辑器/临时备份
+*.backup
+*.backup2
+*_fixed.js
+
+# 完整代码副本包（与 backend 重复，体积大）
+deploy_package/
+
+# 仓库根目录临时运维/修复脚本（多含 SSH 口令，仅本地使用）
+/check_*.py
+/clean_*.py
+/complete_*.py
+/continuous_*.py
+/debug_*.py
+/diagnose_*.py
+/direct_*.py
+/execute_*.py
+/final_*.py
+/fix_*.py
+/immediate_*.py
+/install_all_deps.py
+/kill_and_clean_docker.py
+/live_fix_monitor.py
+/monitor_*.py
+/prepare_deployment*.py
+/quick_*.py
+/real_time_fix_monitor.py
+/redeploy_all_agents.py
+/reproduce_error.py
+/server_test_fix.py
+/simple_*.py
+/step_by_step_deploy.py
+/system_monitor_script.py
+/test_connection.py
+/test_full_functionality.py
+/test_task_management.py
+/ultimate_fix.py
+/update_trend_agent.py
+/view_error_logs.py
+/deployment_report.py
+/deploy_*.py
+/deploy_agents_simple.py
+/deployment_checklist_detailed.json
+/system_monitor_report.json

@@ -9,7 +9,8 @@ export default defineConfig({
   test: {
     globals: false,
     environment: "node",
-    include: ["**/*.test.js"],
+    include: ["**/*.test.js", "**/*.spec.js"],
+    setupFiles: [resolve(__dirname, "setup.js")],
   },
   resolve: {
     alias: {

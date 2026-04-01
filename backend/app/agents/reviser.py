@@ -11,6 +11,9 @@ from app.core import llm
 class ReviserAgent(BaseAgent):
     name = "ReviserAgent"
 
+    def __init__(self, task_id):
+        super().__init__(task_id)
+
     def run(self) -> None:
         try:
             self._set_running(0, "修订准备中...")

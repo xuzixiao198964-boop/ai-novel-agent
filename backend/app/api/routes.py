@@ -38,9 +38,27 @@ from app.core.memory import list_memory_files, read_memory, write_memory, MEMORY
 from app.core.pipeline import start_pipeline, stop_pipeline, pause_pipeline, resume_pipeline, is_pipeline_running, is_pipeline_paused
 from app.core.config import settings
 from app.core.trend_cap import get_trend_suggested_chapter_cap
+from app.core.host_resources import disk_allows_new_task
 
 router = APIRouter(prefix="/api", tags=["api"])
 _BOOKSHELF_TOKENS: dict[str, dict] = {}
+
+
+def _require_disk_for_generation() -> None:
+    """数据目录所在分区剩余空间不足时拒绝新建/启动生成（对齐 TC-C11）。"""
+    ok, info = disk_allows_new_task(settings.data_dir)
+    if ok:
+        return
+    free_mb = round(info.free_bytes / (1024 * 1024), 2) if info else None
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "error": "disk_space_insufficient",
+            "message": "磁盘剩余空间不足（需至少约 500MB），无法创建或启动生成任务",
+            "disk_status": "critical",
+            "free_mb": free_mb,
+        },
+    )
 
 
 # ---------- 简单密码校验（可选） ----------
@@ -112,6 +130,7 @@ def api_list_tasks():
 
 @router.post("/tasks")
 def api_create_task(body: TaskCreate):
+    _require_disk_for_generation()
     task_id = create_task(body.name)
     return {"task_id": task_id, "name": body.name}
 
@@ -210,10 +229,12 @@ def api_start_task(task_id: str):
     if get_task_meta(task_id) is None:
         raise HTTPException(404, "任务不存在")
     purge_old_completed_tasks()
+    _require_disk_for_generation()
     # 若已有任务在运行：连续模式下不冲掉旧任务，改为新建任务
     if not start_pipeline(task_id):
         current = get_current_task_id()
         if current and get_auto_run():
+            _require_disk_for_generation()
             next_id = create_task("自动连续任务")
             return {
                 "ok": True,
@@ -405,6 +426,63 @@ def api_write_memory(task_id: str, filename: str, body: MemoryUpdate):
     if filename not in MEMORY_FILES:
         raise HTTPException(404, "未知记忆文件")
     write_memory(task_id, filename, body.content)
+    return {"ok": True}
+
+
+# ---------- 趋势主题管理 ----------
+@router.get("/trend/genres")
+def api_trend_genres():
+    """获取所有可选题材列表及其章节范围"""
+    from app.agents.trend_agent import GENRE_OPTIONS, GENRE_CHAPTER_RANGES, DEFAULT_RANGE, _get_recent_themes
+    recent = _get_recent_themes("", 3)
+    available = [g for g in GENRE_OPTIONS if g not in recent]
+    genres_detail = []
+    for g in GENRE_OPTIONS:
+        r = GENRE_CHAPTER_RANGES.get(g, DEFAULT_RANGE)
+        genres_detail.append({
+            "genre": g,
+            "ch_min": r["ch_min"], "ch_max": r["ch_max"],
+            "wpc_min": r["wpc_min"], "wpc_max": r["wpc_max"],
+            "recently_used": g in recent,
+        })
+    return {
+        "all_genres": GENRE_OPTIONS,
+        "genres_detail": genres_detail,
+        "recent_used": recent,
+        "available": available,
+    }
+
+
+class ThemeOverride(BaseModel):
+    theme: str
+
+
+@router.post("/trend/set-theme")
+def api_set_manual_theme(body: ThemeOverride):
+    """手动指定下一次任务使用的主题"""
+    f = settings.data_dir / "state" / "manual_theme.txt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(body.theme.strip(), encoding="utf-8")
+    return {"ok": True, "theme": body.theme.strip()}
+
+
+@router.get("/trend/manual-theme")
+def api_get_manual_theme():
+    """获取手动指定的主题（若有）"""
+    f = settings.data_dir / "state" / "manual_theme.txt"
+    if f.exists():
+        theme = f.read_text(encoding="utf-8").strip()
+        if theme:
+            return {"theme": theme}
+    return {"theme": None}
+
+
+@router.delete("/trend/manual-theme")
+def api_clear_manual_theme():
+    """清除手动指定的主题"""
+    f = settings.data_dir / "state" / "manual_theme.txt"
+    if f.exists():
+        f.write_text("", encoding="utf-8")
     return {"ok": True}
 
 

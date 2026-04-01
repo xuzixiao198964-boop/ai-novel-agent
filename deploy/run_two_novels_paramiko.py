@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 import json
+import sys
 import time
 import urllib.parse
+from pathlib import Path
+
 import paramiko
 
-HOST = "104.244.90.202"
-PORT = 22
-USER = "root"
-PASSWORD = "C66ffUMycDn2"  # 与 deploy_ssh.py 一致
+_DEPLOY = Path(__file__).resolve().parent
+if str(_DEPLOY) not in sys.path:
+    sys.path.insert(0, str(_DEPLOY))
+from ssh_env import require_ssh_password, ssh_host, ssh_port, ssh_user
 
 
 def run(c: paramiko.SSHClient, cmd: str) -> str:
@@ -72,9 +75,10 @@ def verify_task(c: paramiko.SSHClient, tid: str) -> dict:
 
 
 def main() -> None:
+    host, port, user, password = ssh_host(), ssh_port(), ssh_user(), require_ssh_password()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=20)
+    c.connect(host, port=port, username=user, password=password, timeout=20)
 
     health = run(c, "curl -s http://127.0.0.1:9000/api/health || true")
     print("health:", health)

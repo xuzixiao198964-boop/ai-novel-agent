@@ -10,8 +10,7 @@ from app.core.state import _task_dir
 def get_trend_suggested_chapter_cap(task_id: str | None = None) -> int:
     """
     优先读任务 output/trend/trend_analysis.json，其次系统 data/trend/trend_analysis.json，
-    否则用 TrendAgent 内置加权统计。
-    结果夹在 chapter_range_min ~ chapter_range_max。
+    否则用 TrendAgent 内置默认统计。
     """
     paths: list[Path] = []
     if task_id:
@@ -31,10 +30,14 @@ def get_trend_suggested_chapter_cap(task_id: str | None = None) -> int:
             continue
 
     if n <= 0:
-        from app.agents.trend import _compute_trend_numbers
+        try:
+            from app.agents.trend_agent import _compute_trend_numbers
+            n = int(_compute_trend_numbers().get("suggested_total_chapters") or 200)
+        except ImportError:
+            try:
+                from app.core.trend_fallback import _compute_trend_numbers_fallback
+                n = int(_compute_trend_numbers_fallback().get("suggested_total_chapters") or 200)
+            except ImportError:
+                n = 200
 
-        n = int(_compute_trend_numbers().get("suggested_total_chapters") or 200)
-
-    lo = int(getattr(settings, "chapter_range_min", 100) or 100)
-    hi = int(getattr(settings, "chapter_range_max", 500) or 500)
-    return max(lo, min(hi, n))
+    return max(30, n)
