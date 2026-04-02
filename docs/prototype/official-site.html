@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>产品官网 — 原型设计</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#fff;color:#1a1a2e}
+.proto-bar{position:fixed;top:0;left:0;right:0;background:#6366f1;color:#fff;padding:8px 16px;font-size:13px;z-index:9999;display:flex;justify-content:space-between;align-items:center}
+.proto-bar a{color:#c7d2fe;text-decoration:none}
+.proto-bar a:hover{color:#fff}
+nav{position:fixed;top:32px;left:0;right:0;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);border-bottom:1px solid #e5e7eb;padding:0 40px;display:flex;align-items:center;justify-content:space-between;height:64px;z-index:999}
+nav .logo{font-size:1.4rem;font-weight:700;background:linear-gradient(90deg,#6366f1,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+nav .links{display:flex;gap:28px}
+nav .links a{color:#64748b;text-decoration:none;font-size:.95rem;transition:color .2s}
+nav .links a:hover{color:#6366f1}
+nav .cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;text-decoration:none;font-size:.9rem;transition:background .2s}
+nav .cta:hover{background:#4f46e5}
+.hero{margin-top:96px;padding:100px 40px;text-align:center;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
+.hero h1{font-size:3rem;font-weight:800;line-height:1.3;margin-bottom:20px}
+.hero h1 span{background:linear-gradient(90deg,#6366f1,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero p{font-size:1.2rem;color:#64748b;max-width:640px;margin:0 auto 36px}
+.hero .btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.hero .btns a{padding:14px 32px;border-radius:12px;font-size:1rem;text-decoration:none;font-weight:600;transition:all .2s}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-primary:hover{background:#4f46e5;transform:translateY(-1px)}
+.btn-secondary{background:#fff;color:#6366f1;border:2px solid #6366f1}
+.btn-secondary:hover{background:#eef2ff}
+section{padding:80px 40px;max-width:1200px;margin:0 auto}
+.section-title{text-align:center;margin-bottom:48px}
+.section-title h2{font-size:2rem;margin-bottom:12px}
+.section-title p{color:#64748b;font-size:1.05rem}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+.feature-card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:16px;padding:32px;text-align:center;transition:all .3s}
+.feature-card:hover{border-color:#6366f1;box-shadow:0 4px 24px rgba(99,102,241,.1)}
+.feature-card .icon{font-size:2.5rem;margin-bottom:16px}
+.feature-card h3{font-size:1.15rem;margin-bottom:8px}
+.feature-card p{color:#64748b;font-size:.9rem;line-height:1.6}
+.pricing{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px}
+.price-card{background:#f8fafc;border:2px solid #e5e7eb;border-radius:16px;padding:32px;text-align:center;transition:all .3s;position:relative}
+.price-card.popular{border-color:#6366f1}
+.price-card.popular::before{content:"推荐";position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:#6366f1;color:#fff;padding:4px 16px;border-radius:20px;font-size:.8rem}
+.price-card h3{font-size:1.2rem;margin-bottom:8px}
+.price-card .price{font-size:2.2rem;font-weight:800;color:#6366f1;margin:12px 0}
+.price-card .price span{font-size:.9rem;color:#94a3b8;font-weight:400}
+.price-card ul{list-style:none;text-align:left;margin:20px 0}
+.price-card ul li{padding:8px 0;border-bottom:1px solid #e5e7eb;font-size:.9rem;color:#475569}
+.price-card ul li::before{content:"✓ ";color:#22c55e;font-weight:700}
+.price-card .btn{display:block;margin-top:20px;padding:12px;border-radius:8px;text-decoration:none;font-weight:600;transition:all .2s}
+.dev-section{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.dev-card{background:#1e293b;color:#e2e8f0;border-radius:16px;padding:32px}
+.dev-card h3{font-size:1.2rem;margin-bottom:12px;color:#818cf8}
+.dev-card p{color:#94a3b8;font-size:.9rem;line-height:1.7;margin-bottom:16px}
+.dev-card code{background:#334155;padding:2px 8px;border-radius:4px;font-size:.85rem;color:#38bdf8}
+.dev-card a{color:#818cf8;text-decoration:none}
+.download-section{display:flex;gap:40px;justify-content:center;align-items:center;flex-wrap:wrap}
+.download-card{text-align:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:16px;padding:40px;min-width:240px}
+.download-card .icon{font-size:4rem;margin-bottom:16px}
+.download-card h3{margin-bottom:12px}
+.download-card .qr{width:160px;height:160px;background:#e5e7eb;border-radius:12px;margin:16px auto;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:.85rem}
+.download-card a{display:inline-block;margin-top:12px;background:#6366f1;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none}
+footer{background:#1e293b;color:#94a3b8;padding:40px;text-align:center;margin-top:40px}
+footer a{color:#818cf8;text-decoration:none;margin:0 12px}
+@media(max-width:768px){
+.hero h1{font-size:2rem}
+.dev-section{grid-template-columns:1fr}
+nav .links{display:none}
+}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+<span>原型预览 — 产品官网 (Port 80)</span>
+<a href="index.html">← 返回原型首页</a>
+</div>
+
+<nav>
+<div class="logo">AI 创作平台</div>
+<div class="links">
+<a href="#features">功能</a>
+<a href="#pricing">定价</a>
+<a href="#developer">开发者</a>
+<a href="#download">下载 App</a>
+<a href="#help">帮助</a>
+</div>
+<a class="cta" href="web-app.html">登录 / 注册</a>
+</nav>
+
+<div class="hero">
+<h1>AI 驱动的<span>一站式内容创作</span>平台</h1>
+<p>自动生成小说 · 智能制作视频 · 多平台一键分发<br>从创意到发布，全程 AI 赋能</p>
+<div class="btns">
+<a class="btn-primary" href="web-app.html">立即体验</a>
+<a class="btn-secondary" href="#pricing">查看定价</a>
+</div>
+</div>
+
+<section id="features">
+<div class="section-title">
+<h2>核心功能</h2>
+<p>覆盖内容创作全链路</p>
+</div>
+<div class="features">
+<div class="feature-card">
+<div class="icon">📖</div>
+<h3>AI 小说生成</h3>
+<p>微小说到超长篇，儿童/男频/女频全题材覆盖。7 Agent 协作，大咖建议加持，每本独一无二</p>
+</div>
+<div class="feature-card">
+<div class="icon">🎬</div>
+<h3>智能视频制作</h3>
+<p>小说/资讯自动转视频，AI 画面生成，TTS 配音，口型同步，字幕背景音乐全可控</p>
+</div>
+<div class="feature-card">
+<div class="icon">📰</div>
+<h3>资讯视频化</h3>
+<p>RSS 抓取全球资讯，大模型归纳总结，口语化述说，原文+中文双语保留</p>
+</div>
+<div class="feature-card">
+<div class="icon">🚀</div>
+<h3>多平台自动发布</h3>
+<p>一键发布到抖音、小红书、番茄小说、起点等平台，状态实时追踪</p>
+</div>
+<div class="feature-card">
+<div class="icon">💰</div>
+<h3>灵活套餐计费</h3>
+<p>按需付费，小说按千字、视频按秒计费，支持支付宝与微信支付</p>
+</div>
+<div class="feature-card">
+<div class="icon">🔌</div>
+<h3>开放 API</h3>
+<p>标准 RESTful API + OpenClaw 协议，支持第三方系统无缝对接</p>
+</div>
+<div class="feature-card">
+<div class="icon">👶</div>
+<h3>儿童故事专区</h3>
+<p>0-3 岁启蒙、3-6 岁童话、6-12 岁冒险成长，为不同年龄段定制</p>
+</div>
+<div class="feature-card">
+<div class="icon">🏪</div>
+<h3>作品广场</h3>
+<p>分享您的创作，浏览他人佳作，构建创作者社区</p>
+</div>
+</div>
+</section>
+
+<section id="pricing">
+<div class="section-title">
+<h2>选择适合您的套餐</h2>
+<p>所有套餐均为充值消耗模式</p>
+</div>
+<div class="pricing">
+<div class="price-card">
+<h3>基础版</h3>
+<p style="color:#94a3b8;font-size:.9rem">纯小说创作</p>
+<div class="price">¥0.05<span>/千字</span></div>
+<ul>
+<li>微/短/中/长/超长篇</li>
+<li>全题材覆盖</li>
+<li>AI 自动策划</li>
+<li>大咖建议加持</li>
+<li>作品下载</li>
+</ul>
+<a class="btn btn-secondary" href="web-app.html" style="border:2px solid #6366f1;color:#6366f1">选择方案</a>
+</div>
+<div class="price-card popular">
+<h3>进阶版</h3>
+<p style="color:#94a3b8;font-size:.9rem">小说 + 视频</p>
+<div class="price">¥0.08<span>/千字 + ¥0.15/秒</span></div>
+<ul>
+<li>基础版全部功能</li>
+<li>AI 视频自动制作</li>
+<li>多种画面模式</li>
+<li>TTS 配音可选</li>
+<li>字幕/背景音乐</li>
+<li>广场发布</li>
+</ul>
+<a class="btn btn-primary" href="web-app.html">选择方案</a>
+</div>
+<div class="price-card">
+<h3>专业版</h3>
+<p style="color:#94a3b8;font-size:.9rem">全功能 + 自动发布</p>
+<div class="price">¥0.10<span>/千字 + ¥0.20/秒</span></div>
+<ul>
+<li>进阶版全部功能</li>
+<li>自动发布抖音/小红书</li>
+<li>小说发布番茄/起点</li>
+<li>API 选择权</li>
+<li>优先队列</li>
+</ul>
+<a class="btn btn-secondary" href="web-app.html" style="border:2px solid #6366f1;color:#6366f1">选择方案</a>
+</div>
+<div class="price-card">
+<h3>企业版</h3>
+<p style="color:#94a3b8;font-size:.9rem">API 对接 + 定制</p>
+<div class="price">定制<span>报价</span></div>
+<ul>
+<li>专业版全部功能</li>
+<li>API Key 无限调用</li>
+<li>OpenClaw 接入</li>
+<li>专属技术支持</li>
+<li>自定义 Agent</li>
+</ul>
+<a class="btn btn-secondary" href="#" style="border:2px solid #6366f1;color:#6366f1">联系我们</a>
+</div>
+</div>
+</section>
+
+<section id="developer">
+<div class="section-title">
+<h2>开发者中心</h2>
+<p>API 接入与 OpenClaw 协议</p>
+</div>
+<div class="dev-section">
+<div class="dev-card">
+<h3>📖 REST API 文档</h3>
+<p>完整的 API 参考手册，覆盖任务创建、进度查询、内容获取等所有接口。</p>
+<p>Base URL: <code>https://api.example.com/open/v1</code></p>
+<p>认证方式: <code>Authorization: Bearer {API_KEY}</code></p>
+<pre style="background:#0f172a;padding:16px;border-radius:8px;margin:12px 0;font-size:.85rem;overflow-x:auto;color:#e2e8f0"><span style="color:#22c55e">POST</span> /open/v1/tasks
+{
+  "task_type": "novel_only",
+  "novel_config": {
+    "length_type": "short",
+    "genre": "male",
+    "sub_genre": "xuanhuan"
+  }
+}
+
+<span style="color:#94a3b8">→ 200</span>
+{
+  "task_id": "abc123",
+  "status": "queued",
+  "queue_position": 3
+}</pre>
+<a href="#">查看完整文档 →</a>
+</div>
+<div class="dev-card">
+<h3>🔗 OpenClaw 接入指南</h3>
+<p>本平台实现 OpenClaw 1.0 协议，允许第三方系统：</p>
+<ul style="list-style:none;margin:12px 0;line-height:2">
+<li>✓ 查询平台能力（<code>/openclaw/capabilities</code>）</li>
+<li>✓ 创建生成任务（<code>/openclaw/tasks</code>）</li>
+<li>✓ 轮询任务进度（<code>/openclaw/tasks/{id}</code>）</li>
+<li>✓ 获取产出文件（<code>/openclaw/tasks/{id}/output</code>）</li>
+</ul>
+<p>所有 OpenClaw 接口需 API Key 认证。</p>
+<a href="#">申请 API Key →</a>
+</div>
+</div>
+</section>
+
+<section id="download">
+<div class="section-title">
+<h2>下载 App</h2>
+<p>随时随地管理您的 AI 创作</p>
+</div>
+<div class="download-section">
+<div class="download-card">
+<div class="icon">🤖</div>
+<h3>Android</h3>
+<div class="qr">[ 二维码占位 ]</div>
+<a href="#">下载 APK</a>
+</div>
+<div class="download-card">
+<div class="icon">🍎</div>
+<h3>iOS</h3>
+<div class="qr">[ 二维码占位 ]</div>
+<a href="#">App Store</a>
+</div>
+<div class="download-card">
+<div class="icon">💬</div>
+<h3>微信小程序</h3>
+<div class="qr">[ 小程序码占位 ]</div>
+<p style="margin-top:12px;color:#94a3b8;font-size:.85rem">微信扫码使用</p>
+</div>
+<div class="download-card">
+<div class="icon">🎵</div>
+<h3>抖音小程序</h3>
+<div class="qr">[ 小程序码占位 ]</div>
+<p style="margin-top:12px;color:#94a3b8;font-size:.85rem">抖音扫码使用</p>
+</div>
+</div>
+</section>
+
+<section id="help">
+<div class="section-title">
+<h2>帮助中心</h2>
+</div>
+<div style="max-width:720px;margin:0 auto">
+<details style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:12px 0;padding:16px">
+<summary style="cursor:pointer;font-weight:600">如何创建第一个小说生成任务？</summary>
+<p style="margin-top:12px;color:#64748b;line-height:1.7">注册并登录后，系统会引导您选择创作方式。选择"只生成小说"后，设置篇幅和题材（也可选随机），确认后系统即刻开始 AI 创作。</p>
+</details>
+<details style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:12px 0;padding:16px">
+<summary style="cursor:pointer;font-weight:600">如何将视频自动发布到抖音？</summary>
+<p style="margin-top:12px;color:#64748b;line-height:1.7">在"设置 → 平台绑定"中绑定您的抖音账号（通过 OAuth 授权）。之后在视频作品页点击"发布抖音"即可。专业版及以上套餐支持自动发布。</p>
+</details>
+<details style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:12px 0;padding:16px">
+<summary style="cursor:pointer;font-weight:600">收费是如何计算的？</summary>
+<p style="margin-top:12px;color:#64748b;line-height:1.7">采用充值余额模式。小说按千字计费，视频按秒计费，具体单价取决于您选择的套餐。每笔消费会在"消费记录"中详细展示。</p>
+</details>
+<details style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:12px 0;padding:16px">
+<summary style="cursor:pointer;font-weight:600">OpenClaw 如何接入？</summary>
+<p style="margin-top:12px;color:#64748b;line-height:1.7">首先在官网申请 API Key，然后参照开发者中心的 OpenClaw 接入指南，使用标准 HTTP 请求即可对接。详见 API 文档。</p>
+</details>
+</div>
+</section>
+
+<footer>
+<p>AI 智能内容创作平台 &copy; 2026</p>
+<p style="margin-top:12px">
+<a href="#">帮助中心</a>
+<a href="#">联系我们</a>
+<a href="#">隐私政策</a>
+<a href="#">服务条款</a>
+</p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App 端 — 原型设计</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1e293b;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;min-height:100vh}
+.proto-bar{position:fixed;top:0;left:0;right:0;background:#22c55e;color:#fff;padding:8px 16px;font-size:13px;z-index:9999;display:flex;justify-content:space-between;align-items:center}
+.proto-bar a{color:#bbf7d0;text-decoration:none}
+.header{margin-top:48px;padding:20px;text-align:center}
+.header h1{font-size:1.5rem;margin-bottom:8px}
+.header p{color:#94a3b8;font-size:.9rem}
+.phone-container{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;padding:20px}
+.phone{width:375px;height:812px;background:#f8fafc;border-radius:40px;border:4px solid #475569;overflow:hidden;position:relative;color:#1e293b;flex-shrink:0}
+.phone .status-bar{background:#1e293b;color:#fff;padding:12px 24px 8px;display:flex;justify-content:space-between;font-size:.7rem}
+.phone .screen{height:calc(100% - 86px);overflow-y:auto}
+.phone .tab-bar{position:absolute;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e5e7eb;display:flex;height:56px;padding-bottom:4px}
+.phone .tab-bar .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:.65rem;color:#94a3b8;cursor:pointer;transition:all .2s}
+.phone .tab-bar .tab.active{color:#6366f1}
+.phone .tab-bar .tab .icon{font-size:1.3rem}
+.phone .tab-bar .tab.create-tab{position:relative;top:-12px}
+.phone .tab-bar .tab.create-tab .icon{width:48px;height:48px;background:#6366f1;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#fff}
+.phone .page-header{padding:16px 20px;background:#fff;border-bottom:1px solid #f1f5f9}
+.phone .page-header h2{font-size:1.15rem}
+.m-card{background:#fff;margin:8px 12px;border-radius:12px;padding:16px;border:1px solid #f1f5f9}
+.m-card h3{font-size:.95rem;margin-bottom:8px}
+.m-stat{display:flex;gap:8px;padding:8px 12px}
+.m-stat .item{flex:1;background:#fff;border-radius:10px;padding:12px;text-align:center;border:1px solid #f1f5f9}
+.m-stat .item .val{font-size:1.3rem;font-weight:700}
+.m-stat .item .lbl{font-size:.7rem;color:#94a3b8;margin-top:2px}
+.m-task{display:flex;align-items:center;gap:10px;padding:12px;border-bottom:1px solid #f8fafc}
+.m-task .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.m-task .dot.running{background:#22c55e;animation:pulse 2s infinite}
+.m-task .dot.queued{background:#f59e0b}
+.m-task .dot.done{background:#6366f1}
+.m-task .info{flex:1}
+.m-task .info h4{font-size:.85rem;margin-bottom:2px}
+.m-task .info p{font-size:.7rem;color:#94a3b8}
+.m-progress{height:4px;background:#e5e7eb;border-radius:2px;margin-top:4px}
+.m-progress .fill{height:100%;background:linear-gradient(90deg,#6366f1,#a855f7);border-radius:2px}
+.m-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:600}
+.m-badge-green{background:#dcfce7;color:#16a34a}
+.m-badge-yellow{background:#fef9c3;color:#a16207}
+.m-badge-blue{background:#dbeafe;color:#2563eb}
+.m-quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:4px}
+.m-quick .item{background:#f8fafc;border-radius:10px;padding:12px 8px;text-align:center;font-size:.75rem;cursor:pointer;border:1px solid #f1f5f9}
+.m-quick .item .icon{font-size:1.5rem;margin-bottom:4px}
+.m-work{display:flex;gap:10px;padding:12px;border-bottom:1px solid #f8fafc}
+.m-work .cover{width:60px;height:80px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0}
+.m-work .info{flex:1}
+.m-work .info h4{font-size:.85rem;margin-bottom:2px}
+.m-work .info p{font-size:.7rem;color:#94a3b8}
+.phone-label{text-align:center;margin-top:8px;color:#94a3b8;font-size:.85rem}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+<span>原型预览 — App 端 (Android / iOS)</span>
+<a href="index.html">← 返回原型首页</a>
+</div>
+
+<div class="header">
+<h1>App 端原型预览</h1>
+<p>左右滑动查看不同页面</p>
+</div>
+
+<div class="phone-container">
+
+<!-- 首页 -->
+<div>
+<div class="phone">
+<div class="status-bar"><span>13:05</span><span>📶 🔋 85%</span></div>
+<div class="screen">
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center">
+<h2>AI 创作平台</h2>
+<div style="display:flex;gap:8px"><span style="font-size:1.2rem">🔔</span><span style="font-size:1.2rem">👤</span></div>
+</div>
+
+<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);margin:8px 12px;border-radius:12px;padding:16px;color:#fff">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<div style="font-size:.75rem;opacity:.8">余额</div>
+<div style="font-size:1.8rem;font-weight:800">¥ 88.30</div>
+<div style="font-size:.7rem;opacity:.8;margin-top:2px">进阶版套餐</div>
+</div>
+<div style="background:rgba(255,255,255,.2);padding:8px 16px;border-radius:8px;font-size:.8rem;cursor:pointer">充值</div>
+</div>
+</div>
+
+<div class="m-card">
+<h3>快速创建</h3>
+<div class="m-quick">
+<div class="item"><div class="icon">📖</div>小说</div>
+<div class="item"><div class="icon">🎬</div>视频</div>
+<div class="item"><div class="icon">📰</div>资讯</div>
+<div class="item"><div class="icon">🎲</div>随机</div>
+</div>
+</div>
+
+<div class="m-card">
+<h3>进行中</h3>
+<div class="m-task">
+<div class="dot running"></div>
+<div class="info">
+<h4>《龙族传说》</h4>
+<p>玄幻·长篇 · 第12/30章 · ~45min</p>
+<div class="m-progress"><div class="fill" style="width:65%"></div></div>
+</div>
+<span class="m-badge m-badge-green">65%</span>
+</div>
+<div class="m-task">
+<div class="dot running"></div>
+<div class="info">
+<h4>龙族传说 · 视频制作</h4>
+<p>TTS配音 · 第3/12集 · ~30min</p>
+<div class="m-progress"><div class="fill" style="width:40%"></div></div>
+</div>
+<span class="m-badge m-badge-green">40%</span>
+</div>
+<div class="m-task">
+<div class="dot queued"></div>
+<div class="info">
+<h4>《霸总的甜蜜陷阱》</h4>
+<p>排队第5 · 预估25min</p>
+</div>
+<span class="m-badge m-badge-yellow">排队</span>
+</div>
+</div>
+
+<div class="m-card">
+<h3>最近完成</h3>
+<div class="m-work">
+<div class="cover" style="background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff">📖</div>
+<div class="info">
+<h4>《星际迷途》</h4>
+<p>科幻·中篇 · 8万字 · ⭐4.7</p>
+<p>昨天完成</p>
+</div>
+</div>
+<div class="m-work">
+<div class="cover" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff">🎬</div>
+<div class="info">
+<h4>AI峰会速览</h4>
+<p>资讯视频 · 02:30</p>
+<p>2天前完成</p>
+</div>
+</div>
+</div>
+</div>
+<div class="tab-bar">
+<div class="tab active"><div class="icon">🏠</div>首页</div>
+<div class="tab"><div class="icon">📖</div>作品</div>
+<div class="tab create-tab"><div class="icon">＋</div></div>
+<div class="tab"><div class="icon">🏪</div>广场</div>
+<div class="tab"><div class="icon">👤</div>我的</div>
+</div>
+</div>
+<div class="phone-label">首页</div>
+</div>
+
+<!-- 创建任务页 -->
+<div>
+<div class="phone">
+<div class="status-bar"><span>13:06</span><span>📶 🔋 85%</span></div>
+<div class="screen">
+<div class="page-header"><h2>创建任务</h2></div>
+
+<div class="m-card">
+<h3>创作方式</h3>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+<div style="background:#eef2ff;border:2px solid #6366f1;border-radius:10px;padding:14px;text-align:center">
+<div style="font-size:1.5rem;margin-bottom:4px">📖</div>
+<div style="font-size:.8rem;font-weight:600;color:#6366f1">只生成小说</div>
+</div>
+<div style="background:#f8fafc;border:2px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center">
+<div style="font-size:1.5rem;margin-bottom:4px">📖🎬</div>
+<div style="font-size:.8rem;color:#64748b">小说+视频</div>
+</div>
+<div style="background:#f8fafc;border:2px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center">
+<div style="font-size:1.5rem;margin-bottom:4px">📥🎬</div>
+<div style="font-size:.8rem;color:#64748b">外部→视频</div>
+</div>
+<div style="background:#f8fafc;border:2px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center">
+<div style="font-size:1.5rem;margin-bottom:4px">📰🎬</div>
+<div style="font-size:.8rem;color:#64748b">资讯→视频</div>
+</div>
+</div>
+</div>
+
+<div class="m-card">
+<h3>篇幅</h3>
+<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">微小说</span>
+<span style="padding:6px 12px;background:#eef2ff;border-radius:20px;font-size:.75rem;border:2px solid #6366f1;color:#6366f1">短篇</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">中篇</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">长篇</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">超长篇</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">🎲 随机</span>
+</div>
+</div>
+
+<div class="m-card">
+<h3>题材</h3>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+<div style="text-align:center;padding:10px 4px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;font-size:.75rem"><div style="font-size:1.2rem">👶</div>儿童</div>
+<div style="text-align:center;padding:10px 4px;border-radius:8px;background:#eef2ff;border:2px solid #6366f1;font-size:.75rem;color:#6366f1"><div style="font-size:1.2rem">🗡️</div>男频</div>
+<div style="text-align:center;padding:10px 4px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;font-size:.75rem"><div style="font-size:1.2rem">💕</div>女频</div>
+<div style="text-align:center;padding:10px 4px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;font-size:.75rem"><div style="font-size:1.2rem">🎲</div>随机</div>
+</div>
+</div>
+
+<div class="m-card">
+<h3>男频子分类</h3>
+<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+<span style="padding:6px 12px;background:#eef2ff;border-radius:20px;font-size:.75rem;border:2px solid #6366f1;color:#6366f1">玄幻</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">仙侠</span>
+<span style="padding:6px 12px;background:#eef2ff;border-radius:20px;font-size:.75rem;border:2px solid #6366f1;color:#6366f1">军事</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">都市</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">科幻</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">历史</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">悬疑</span>
+<span style="padding:6px 12px;background:#f1f5f9;border-radius:20px;font-size:.75rem;border:1px solid #e5e7eb">🎲随机</span>
+</div>
+</div>
+
+<div style="padding:12px">
+<div style="background:#f0fdf4;border-radius:10px;padding:12px;font-size:.8rem;color:#16a34a;margin-bottom:12px">
+预估消费：¥1.20 ~ 2.40 | 余额：¥88.30
+</div>
+<div style="background:#6366f1;color:#fff;padding:14px;border-radius:12px;text-align:center;font-weight:600;font-size:.95rem;cursor:pointer">
+🚀 开始创建
+</div>
+</div>
+</div>
+<div class="tab-bar">
+<div class="tab"><div class="icon">🏠</div>首页</div>
+<div class="tab"><div class="icon">📖</div>作品</div>
+<div class="tab create-tab active"><div class="icon">＋</div></div>
+<div class="tab"><div class="icon">🏪</div>广场</div>
+<div class="tab"><div class="icon">👤</div>我的</div>
+</div>
+</div>
+<div class="phone-label">创建任务</div>
+</div>
+
+<!-- 个人中心 -->
+<div>
+<div class="phone">
+<div class="status-bar"><span>13:07</span><span>📶 🔋 85%</span></div>
+<div class="screen">
+<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px 20px 24px;color:#fff">
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+<div style="width:56px;height:56px;background:rgba(255,255,255,.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.5rem">👤</div>
+<div>
+<div style="font-size:1.1rem;font-weight:700">AI创作者</div>
+<div style="font-size:.75rem;opacity:.8">进阶版 · 138****1234</div>
+</div>
+</div>
+<div style="display:flex;gap:16px">
+<div style="flex:1;text-align:center"><div style="font-size:1.3rem;font-weight:700">¥88.30</div><div style="font-size:.7rem;opacity:.8">余额</div></div>
+<div style="flex:1;text-align:center"><div style="font-size:1.3rem;font-weight:700">12</div><div style="font-size:.7rem;opacity:.8">作品</div></div>
+<div style="flex:1;text-align:center"><div style="font-size:1.3rem;font-weight:700">3</div><div style="font-size:.7rem;opacity:.8">进行中</div></div>
+</div>
+</div>
+
+<div class="m-card">
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+<div style="text-align:center;padding:10px 4px;font-size:.75rem"><div style="font-size:1.3rem;margin-bottom:4px">📦</div>套餐</div>
+<div style="text-align:center;padding:10px 4px;font-size:.75rem"><div style="font-size:1.3rem;margin-bottom:4px">💰</div>充值</div>
+<div style="text-align:center;padding:10px 4px;font-size:.75rem"><div style="font-size:1.3rem;margin-bottom:4px">📄</div>账单</div>
+<div style="text-align:center;padding:10px 4px;font-size:.75rem"><div style="font-size:1.3rem;margin-bottom:4px">🔗</div>绑定</div>
+</div>
+</div>
+
+<div class="m-card" style="padding:0">
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">📦 当前套餐</span><span style="font-size:.85rem;color:#6366f1">进阶版 ></span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">🔗 平台绑定</span><span style="font-size:.85rem;color:#94a3b8">1个平台 ></span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">📱 微信绑定</span><span style="font-size:.85rem;color:#22c55e">已绑定 ✓</span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">🎵 抖音绑定</span><span style="font-size:.85rem;color:#94a3b8">未绑定 ></span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">⚙️ 设置</span><span style="font-size:.85rem;color:#94a3b8">></span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9"><span style="font-size:.9rem">❓ 帮助中心</span><span style="font-size:.85rem;color:#94a3b8">></span></div>
+<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:.9rem">📞 联系客服</span><span style="font-size:.85rem;color:#94a3b8">></span></div>
+</div>
+
+<div style="padding:16px 12px">
+<div style="background:#fee2e2;color:#dc2626;padding:12px;border-radius:10px;text-align:center;font-size:.85rem;cursor:pointer">退出登录</div>
+</div>
+</div>
+<div class="tab-bar">
+<div class="tab"><div class="icon">🏠</div>首页</div>
+<div class="tab"><div class="icon">📖</div>作品</div>
+<div class="tab create-tab"><div class="icon">＋</div></div>
+<div class="tab"><div class="icon">🏪</div>广场</div>
+<div class="tab active"><div class="icon">👤</div>我的</div>
+</div>
+</div>
+<div class="phone-label">个人中心</div>
+</div>
+
+</div>
+</body>
+</html>

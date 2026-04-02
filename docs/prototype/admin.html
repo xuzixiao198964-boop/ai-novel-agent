@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后台管理系统 — 原型设计</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f1f5f9;color:#1e293b}
+.proto-bar{position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;padding:8px 16px;font-size:13px;z-index:9999;display:flex;justify-content:space-between;align-items:center}
+.proto-bar a{color:#fecaca;text-decoration:none}
+.layout{display:flex;min-height:100vh;padding-top:32px}
+.sidebar{width:220px;background:#111827;color:#e2e8f0;padding:20px 0;position:fixed;top:32px;bottom:0;overflow-y:auto}
+.sidebar .logo{padding:0 16px 16px;font-size:1.1rem;font-weight:700;color:#f87171;border-bottom:1px solid #1f2937;margin-bottom:12px}
+.sidebar .menu-item{display:flex;align-items:center;gap:10px;padding:10px 16px;color:#9ca3af;cursor:pointer;transition:all .2s;font-size:.85rem;text-decoration:none}
+.sidebar .menu-item:hover{background:#1f2937;color:#f3f4f6}
+.sidebar .menu-item.active{background:#1f2937;color:#f87171;border-left:3px solid #f87171}
+.main{margin-left:220px;flex:1;padding:24px}
+.page{display:none}.page.active{display:block}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.topbar h1{font-size:1.4rem}
+.topbar .admin-info{display:flex;align-items:center;gap:8px;font-size:.85rem;color:#64748b}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e7eb}
+.stat-card .label{font-size:.8rem;color:#64748b;margin-bottom:4px}
+.stat-card .value{font-size:2rem;font-weight:700}
+.stat-card .sub{font-size:.75rem;margin-top:4px}
+.card{background:#fff;border-radius:12px;padding:24px;margin-bottom:16px;border:1px solid #e5e7eb}
+.card h2{font-size:1.1rem;margin-bottom:16px;color:#334155}
+.table{width:100%;border-collapse:collapse;font-size:.85rem}
+.table th,.table td{padding:10px 12px;text-align:left;border-bottom:1px solid #f1f5f9}
+.table th{background:#f8fafc;font-weight:600;color:#64748b;font-size:.8rem}
+.table tr:hover{background:#f8fafc}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.7rem;font-weight:600}
+.badge-green{background:#dcfce7;color:#16a34a}
+.badge-blue{background:#dbeafe;color:#2563eb}
+.badge-yellow{background:#fef9c3;color:#a16207}
+.badge-red{background:#fee2e2;color:#dc2626}
+.badge-gray{background:#f1f5f9;color:#64748b}
+.btn{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:.8rem;font-weight:600;transition:all .2s}
+.btn-sm{padding:4px 10px;font-size:.75rem}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-danger{background:#fee2e2;color:#dc2626}
+.btn-outline{background:#fff;color:#64748b;border:1px solid #e5e7eb}
+.chart-placeholder{background:#f8fafc;border:1px dashed #e5e7eb;border-radius:8px;height:200px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:.9rem}
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+.toolbar input[type=text]{padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:.85rem;width:240px}
+.pagination{display:flex;gap:4px;justify-content:center;margin-top:16px}
+.pagination span{padding:6px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:.8rem;cursor:pointer}
+.pagination span.active{background:#6366f1;color:#fff;border-color:#6366f1}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+<span>原型预览 — 后台管理系统 (管理员)</span>
+<a href="index.html">← 返回原型首页</a>
+</div>
+
+<div class="layout">
+<div class="sidebar">
+<div class="logo">🛡️ 管理后台</div>
+<a class="menu-item active" onclick="showPage('dashboard')">📊 数据概览</a>
+<a class="menu-item" onclick="showPage('users')">👥 用户管理</a>
+<a class="menu-item" onclick="showPage('novels')">📖 小说管理</a>
+<a class="menu-item" onclick="showPage('videos')">🎬 视频管理</a>
+<a class="menu-item" onclick="showPage('tasks')">📋 任务监控</a>
+<a class="menu-item" onclick="showPage('apikeys')">🔑 API Key</a>
+<a class="menu-item" onclick="showPage('finance')">💰 财务报表</a>
+<a class="menu-item" onclick="showPage('publish')">📤 发布管理</a>
+<a class="menu-item" onclick="showPage('logs')">📝 系统日志</a>
+<a class="menu-item" onclick="showPage('config')">⚙️ 系统配置</a>
+</div>
+
+<div class="main">
+
+<!-- 数据概览 -->
+<div id="page-dashboard" class="page active">
+<div class="topbar"><h1>数据概览</h1><div class="admin-info">管理员: admin | <a href="#" style="color:#6366f1">退出</a></div></div>
+<div class="stats">
+<div class="stat-card"><div class="label">用户总数</div><div class="value">12,345</div><div class="sub" style="color:#22c55e">+156 今日注册</div></div>
+<div class="stat-card"><div class="label">活跃任务</div><div class="value">89</div><div class="sub" style="color:#f59e0b">排队: 34</div></div>
+<div class="stat-card"><div class="label">今日收入</div><div class="value" style="color:#22c55e">¥8,920</div><div class="sub" style="color:#22c55e">+12% 较昨日</div></div>
+<div class="stat-card"><div class="label">作品总数</div><div class="value">45,678</div><div class="sub">小说: 28K | 视频: 17K</div></div>
+</div>
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
+<div class="card">
+<h2>收入趋势 (近30天)</h2>
+<div class="chart-placeholder">📈 折线图：日收入趋势</div>
+</div>
+<div class="card">
+<h2>任务类型分布</h2>
+<div class="chart-placeholder">🍩 饼图</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="card">
+<h2>套餐分布</h2>
+<div class="chart-placeholder">📊 柱状图</div>
+</div>
+<div class="card">
+<h2>最近注册用户</h2>
+<table class="table">
+<tr><th>用户</th><th>注册时间</th><th>套餐</th></tr>
+<tr><td>user_1234</td><td>10分钟前</td><td><span class="badge badge-blue">进阶</span></td></tr>
+<tr><td>creator_abc</td><td>25分钟前</td><td><span class="badge badge-green">基础</span></td></tr>
+<tr><td>novel_fan</td><td>1小时前</td><td><span class="badge badge-yellow">专业</span></td></tr>
+</table>
+</div>
+</div>
+</div>
+
+<!-- 用户管理 -->
+<div id="page-users" class="page">
+<div class="topbar"><h1>用户管理</h1></div>
+<div class="card">
+<div class="toolbar">
+<div><input type="text" placeholder="搜索用户名/邮箱/手机..."><button class="btn btn-primary" style="margin-left:8px">搜索</button></div>
+<div><button class="btn btn-outline">导出</button></div>
+</div>
+<table class="table">
+<thead>
+<tr><th>ID</th><th>用户名</th><th>邮箱</th><th>套餐</th><th>余额</th><th>状态</th><th>注册时间</th><th>操作</th></tr>
+</thead>
+<tbody>
+<tr><td>1001</td><td>creator_top</td><td>top@email.com</td><td><span class="badge badge-yellow">专业</span></td><td>¥1,250</td><td><span class="badge badge-green">正常</span></td><td>2026-01-15</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">禁用</button></td></tr>
+<tr><td>1002</td><td>novel_fan</td><td>fan@email.com</td><td><span class="badge badge-blue">进阶</span></td><td>¥88</td><td><span class="badge badge-green">正常</span></td><td>2026-02-20</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">禁用</button></td></tr>
+<tr><td>1003</td><td>bad_user</td><td>bad@email.com</td><td><span class="badge badge-gray">基础</span></td><td>¥0</td><td><span class="badge badge-red">已禁用</span></td><td>2026-03-01</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-primary">启用</button></td></tr>
+<tr><td>1004</td><td>dev_api</td><td>dev@corp.com</td><td><span class="badge badge-red">企业</span></td><td>¥5,000</td><td><span class="badge badge-green">正常</span></td><td>2026-03-10</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">禁用</button></td></tr>
+</tbody>
+</table>
+<div class="pagination">
+<span>«</span><span class="active">1</span><span>2</span><span>3</span><span>...</span><span>125</span><span>»</span>
+</div>
+</div>
+</div>
+
+<!-- 小说管理 -->
+<div id="page-novels" class="page">
+<div class="topbar"><h1>小说作品管理</h1></div>
+<div class="card">
+<div class="toolbar">
+<div><input type="text" placeholder="搜索小说标题..."><button class="btn btn-primary" style="margin-left:8px">搜索</button></div>
+<div>
+<select style="padding:6px;border:1px solid #e5e7eb;border-radius:6px;font-size:.85rem">
+<option>全部分类</option><option>儿童</option><option>男频</option><option>女频</option>
+</select>
+</div>
+</div>
+<table class="table">
+<thead><tr><th>ID</th><th>标题</th><th>作者</th><th>分类</th><th>字数</th><th>广场</th><th>评分</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>N-001</td><td>《龙族传说》</td><td>creator_top</td><td>玄幻·长篇</td><td>32万</td><td><span class="badge badge-green">已发布</span></td><td>4.5</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">下架</button></td></tr>
+<tr><td>N-002</td><td>《霸总的秘密》</td><td>novel_fan</td><td>霸总·短篇</td><td>2.8万</td><td><span class="badge badge-green">已发布</span></td><td>4.2</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">下架</button></td></tr>
+<tr><td>N-003</td><td>《小兔冒险》</td><td>creator_top</td><td>儿童·微小说</td><td>3千</td><td><span class="badge badge-gray">未发布</span></td><td>-</td><td><button class="btn btn-sm btn-outline">查看</button> <button class="btn btn-sm btn-danger">删除</button></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 视频管理 -->
+<div id="page-videos" class="page">
+<div class="topbar"><h1>视频作品管理</h1></div>
+<div class="card">
+<table class="table">
+<thead><tr><th>ID</th><th>标题</th><th>作者</th><th>类型</th><th>时长</th><th>集数</th><th>状态</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>V-001</td><td>龙族传说</td><td>creator_top</td><td>小说类</td><td>36min</td><td>12集</td><td><span class="badge badge-green">已发布</span></td><td><button class="btn btn-sm btn-outline">查看</button></td></tr>
+<tr><td>V-002</td><td>AI峰会速览</td><td>novel_fan</td><td>资讯类</td><td>2:30</td><td>1</td><td><span class="badge badge-blue">广场</span></td><td><button class="btn btn-sm btn-outline">查看</button></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 任务监控 -->
+<div id="page-tasks" class="page">
+<div class="topbar"><h1>任务监控</h1></div>
+<div class="stats">
+<div class="stat-card"><div class="label">运行中</div><div class="value" style="color:#22c55e">23</div></div>
+<div class="stat-card"><div class="label">排队中</div><div class="value" style="color:#f59e0b">34</div></div>
+<div class="stat-card"><div class="label">今日完成</div><div class="value" style="color:#6366f1">67</div></div>
+<div class="stat-card"><div class="label">今日失败</div><div class="value" style="color:#ef4444">2</div></div>
+</div>
+<div class="card">
+<h2>实时任务列表</h2>
+<table class="table">
+<thead><tr><th>任务ID</th><th>用户</th><th>类型</th><th>状态</th><th>进度</th><th>当前Agent</th><th>耗时</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>T-089</td><td>creator_top</td><td>小说+视频</td><td><span class="badge badge-green">运行中</span></td><td>65%</td><td>WriterAgent 12/30</td><td>25min</td><td><button class="btn btn-sm btn-danger">停止</button></td></tr>
+<tr><td>T-088</td><td>novel_fan</td><td>资讯视频</td><td><span class="badge badge-green">运行中</span></td><td>40%</td><td>TTS配音</td><td>8min</td><td><button class="btn btn-sm btn-danger">停止</button></td></tr>
+<tr><td>T-087</td><td>user_abc</td><td>纯小说</td><td><span class="badge badge-yellow">排队#1</span></td><td>0%</td><td>-</td><td>-</td><td><button class="btn btn-sm btn-outline">优先</button></td></tr>
+<tr><td>T-086</td><td>user_xyz</td><td>外部→视频</td><td><span class="badge badge-yellow">排队#2</span></td><td>0%</td><td>-</td><td>-</td><td><button class="btn btn-sm btn-outline">优先</button></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- API Key -->
+<div id="page-apikeys" class="page">
+<div class="topbar"><h1>API Key 管理</h1></div>
+<div class="card">
+<div class="toolbar">
+<div><input type="text" placeholder="搜索 Key / 用户..."><button class="btn btn-primary" style="margin-left:8px">搜索</button></div>
+<div><button class="btn btn-primary">+ 创建 Key</button></div>
+</div>
+<table class="table">
+<thead><tr><th>Key ID</th><th>用户</th><th>名称</th><th>权限</th><th>调用次数</th><th>限流</th><th>状态</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>ak_001</td><td>dev_api</td><td>生产环境</td><td>全部</td><td>12,456</td><td>100/min</td><td><span class="badge badge-green">活跃</span></td><td><button class="btn btn-sm btn-danger">吊销</button></td></tr>
+<tr><td>ak_002</td><td>dev_api</td><td>测试环境</td><td>只读</td><td>890</td><td>30/min</td><td><span class="badge badge-green">活跃</span></td><td><button class="btn btn-sm btn-danger">吊销</button></td></tr>
+<tr><td>ak_003</td><td>creator_top</td><td>OpenClaw</td><td>任务+查询</td><td>234</td><td>10/min</td><td><span class="badge badge-green">活跃</span></td><td><button class="btn btn-sm btn-danger">吊销</button></td></tr>
+<tr><td>ak_004</td><td>bad_user</td><td>已禁用</td><td>-</td><td>56</td><td>-</td><td><span class="badge badge-red">已吊销</span></td><td>-</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 财务 -->
+<div id="page-finance" class="page">
+<div class="topbar"><h1>财务报表</h1></div>
+<div class="stats">
+<div class="stat-card"><div class="label">本月总收入</div><div class="value" style="color:#22c55e">¥128,450</div></div>
+<div class="stat-card"><div class="label">本月 API 成本</div><div class="value" style="color:#ef4444">¥98,200</div></div>
+<div class="stat-card"><div class="label">本月毛利</div><div class="value" style="color:#6366f1">¥30,250</div></div>
+<div class="stat-card"><div class="label">毛利率</div><div class="value">23.5%</div></div>
+</div>
+<div class="card">
+<h2>收入 vs 成本趋势</h2>
+<div class="chart-placeholder">📈 双折线图：收入(绿) / API成本(红)</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="card">
+<h2>收入来源分布</h2>
+<div class="chart-placeholder">🍩 饼图：小说/视频/充值</div>
+</div>
+<div class="card">
+<h2>套餐收入分布</h2>
+<div class="chart-placeholder">📊 柱状图：基础/进阶/专业/企业</div>
+</div>
+</div>
+</div>
+
+<!-- 发布管理 -->
+<div id="page-publish" class="page">
+<div class="topbar"><h1>发布管理</h1></div>
+<div class="card">
+<table class="table">
+<thead><tr><th>ID</th><th>内容</th><th>平台</th><th>用户</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>P-101</td><td>龙族传说·EP01</td><td>抖音</td><td>creator_top</td><td><span class="badge badge-green">成功</span></td><td>2h前</td><td><button class="btn btn-sm btn-outline">详情</button></td></tr>
+<tr><td>P-100</td><td>AI峰会速览</td><td>小红书</td><td>novel_fan</td><td><span class="badge badge-yellow">审核中</span></td><td>3h前</td><td><button class="btn btn-sm btn-outline">详情</button></td></tr>
+<tr><td>P-099</td><td>《霸总的秘密》</td><td>番茄小说</td><td>novel_fan</td><td><span class="badge badge-red">失败</span></td><td>5h前</td><td><button class="btn btn-sm btn-primary">重试</button></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 日志 -->
+<div id="page-logs" class="page">
+<div class="topbar"><h1>系统日志</h1></div>
+<div class="card">
+<div class="toolbar">
+<div>
+<select style="padding:6px;border:1px solid #e5e7eb;border-radius:6px;font-size:.85rem">
+<option>全部级别</option><option>ERROR</option><option>WARN</option><option>INFO</option>
+</select>
+<input type="text" placeholder="搜索关键词..." style="margin-left:8px">
+</div>
+</div>
+<table class="table">
+<thead><tr><th>时间</th><th>级别</th><th>模块</th><th>消息</th></tr></thead>
+<tbody>
+<tr><td>13:05:22</td><td><span class="badge badge-red">ERROR</span></td><td>publisher</td><td>番茄小说发布失败: 401 Token过期 (user: novel_fan)</td></tr>
+<tr><td>13:04:15</td><td><span class="badge badge-yellow">WARN</span></td><td>billing</td><td>用户 user_xyz 余额不足, 任务 T-090 暂停</td></tr>
+<tr><td>13:03:48</td><td><span class="badge badge-green">INFO</span></td><td>pipeline</td><td>任务 T-089 WriterAgent 完成第12章</td></tr>
+<tr><td>13:02:30</td><td><span class="badge badge-green">INFO</span></td><td>auth</td><td>用户 user_1234 注册成功</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 配置 -->
+<div id="page-config" class="page">
+<div class="topbar"><h1>系统配置</h1></div>
+<div class="card">
+<h2>套餐定价</h2>
+<table class="table">
+<thead><tr><th>套餐</th><th>小说单价(千字)</th><th>视频单价(秒)</th><th>API限额</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>基础版</td><td>¥0.05</td><td>-</td><td>-</td><td><button class="btn btn-sm btn-outline">编辑</button></td></tr>
+<tr><td>进阶版</td><td>¥0.08</td><td>¥0.15</td><td>-</td><td><button class="btn btn-sm btn-outline">编辑</button></td></tr>
+<tr><td>专业版</td><td>¥0.10</td><td>¥0.20</td><td>1000/天</td><td><button class="btn btn-sm btn-outline">编辑</button></td></tr>
+<tr><td>企业版</td><td>定制</td><td>定制</td><td>无限</td><td><button class="btn btn-sm btn-outline">编辑</button></td></tr>
+</tbody>
+</table>
+</div>
+<div class="card">
+<h2>系统参数</h2>
+<div style="display:grid;gap:12px;max-width:500px">
+<label style="font-size:.85rem">计费倍率范围<br>
+<div style="display:flex;gap:8px;margin-top:4px"><input type="number" value="1.1" step="0.01" style="width:80px;padding:6px;border:1px solid #e5e7eb;border-radius:4px"> ~ <input type="number" value="1.2" step="0.01" style="width:80px;padding:6px;border:1px solid #e5e7eb;border-radius:4px"></div>
+</label>
+<label style="font-size:.85rem">最大并发任务数<br><input type="number" value="20" style="width:120px;padding:6px;border:1px solid #e5e7eb;border-radius:4px;margin-top:4px"></label>
+<label style="font-size:.85rem">发布模式<br>
+<select style="padding:6px;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px"><option>mock (模拟)</option><option>production (生产)</option></select>
+</label>
+<button class="btn btn-primary" style="width:120px;margin-top:8px">保存配置</button>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+
+<script>
+function showPage(name){
+document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+document.getElementById('page-'+name).classList.add('active');
+document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));
+event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

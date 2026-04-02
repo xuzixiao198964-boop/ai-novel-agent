@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>用户端 Web 应用 — 原型设计</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f1f5f9;color:#1e293b}
+.proto-bar{position:fixed;top:0;left:0;right:0;background:#6366f1;color:#fff;padding:8px 16px;font-size:13px;z-index:9999;display:flex;justify-content:space-between;align-items:center}
+.proto-bar a{color:#c7d2fe;text-decoration:none}
+.layout{display:flex;min-height:100vh;padding-top:32px}
+.sidebar{width:240px;background:#1e293b;color:#e2e8f0;padding:20px 0;position:fixed;top:32px;bottom:0;overflow-y:auto}
+.sidebar .logo{padding:0 20px 20px;font-size:1.2rem;font-weight:700;color:#818cf8;border-bottom:1px solid #334155;margin-bottom:12px}
+.sidebar .menu-group{padding:8px 0}
+.sidebar .menu-group-title{padding:8px 20px;font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.sidebar .menu-item{display:flex;align-items:center;gap:10px;padding:10px 20px;color:#94a3b8;cursor:pointer;transition:all .2s;font-size:.9rem;text-decoration:none}
+.sidebar .menu-item:hover{background:#334155;color:#e2e8f0}
+.sidebar .menu-item.active{background:#334155;color:#818cf8;border-right:3px solid #818cf8}
+.main{margin-left:240px;flex:1;padding:24px}
+.page{display:none}
+.page.active{display:block}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.topbar h1{font-size:1.5rem}
+.topbar .user-info{display:flex;align-items:center;gap:12px}
+.topbar .balance{background:#fff;padding:8px 16px;border-radius:8px;font-size:.9rem;border:1px solid #e5e7eb}
+.topbar .balance span{color:#6366f1;font-weight:700}
+.card{background:#fff;border-radius:12px;padding:24px;margin-bottom:16px;border:1px solid #e5e7eb}
+.card h2{font-size:1.15rem;margin-bottom:16px;color:#334155}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e7eb}
+.stat-card .label{font-size:.85rem;color:#64748b}
+.stat-card .value{font-size:1.8rem;font-weight:700;color:#1e293b;margin:4px 0}
+.stat-card .sub{font-size:.8rem;color:#22c55e}
+.mode-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.mode-card{background:#f8fafc;border:2px solid #e5e7eb;border-radius:12px;padding:24px;cursor:pointer;transition:all .3s;text-align:center}
+.mode-card:hover{border-color:#6366f1;background:#eef2ff}
+.mode-card.selected{border-color:#6366f1;background:#eef2ff}
+.mode-card .icon{font-size:2.5rem;margin-bottom:8px}
+.mode-card h3{font-size:1rem;margin-bottom:4px}
+.mode-card p{font-size:.85rem;color:#64748b}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-weight:600;margin-bottom:8px;font-size:.9rem}
+.form-group .options{display:flex;flex-wrap:wrap;gap:8px}
+.form-group .option{padding:8px 16px;background:#f1f5f9;border:2px solid #e5e7eb;border-radius:8px;cursor:pointer;font-size:.85rem;transition:all .2s}
+.form-group .option:hover{border-color:#6366f1}
+.form-group .option.selected{background:#eef2ff;border-color:#6366f1;color:#6366f1}
+.btn{padding:10px 24px;border-radius:8px;border:none;cursor:pointer;font-size:.9rem;font-weight:600;transition:all .2s}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-primary:hover{background:#4f46e5}
+.btn-outline{background:#fff;color:#6366f1;border:2px solid #6366f1}
+.progress-bar{height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin:8px 0}
+.progress-bar .fill{height:100%;background:linear-gradient(90deg,#6366f1,#a855f7);border-radius:4px;transition:width .5s}
+.task-list{display:flex;flex-direction:column;gap:12px}
+.task-item{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;align-items:center;gap:16px}
+.task-item .status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.task-item .status.running{background:#22c55e;animation:pulse 2s infinite}
+.task-item .status.queued{background:#f59e0b}
+.task-item .status.done{background:#6366f1}
+.task-item .info{flex:1}
+.task-item .info h4{font-size:.95rem;margin-bottom:4px}
+.task-item .info p{font-size:.8rem;color:#64748b}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.work-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.work-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;transition:all .2s}
+.work-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.08)}
+.work-card .cover{height:140px;background:linear-gradient(135deg,#6366f1,#a855f7);display:flex;align-items:center;justify-content:center;font-size:3rem}
+.work-card .body{padding:16px}
+.work-card .body h3{font-size:1rem;margin-bottom:4px}
+.work-card .body p{font-size:.8rem;color:#64748b;margin-bottom:8px}
+.work-card .actions{display:flex;gap:8px;flex-wrap:wrap}
+.work-card .actions a{font-size:.75rem;padding:4px 10px;border-radius:6px;text-decoration:none;background:#f1f5f9;color:#6366f1;border:1px solid #e5e7eb;transition:all .2s}
+.work-card .actions a:hover{background:#eef2ff;border-color:#6366f1}
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid #e5e7eb;padding-bottom:0}
+.tabs .tab{padding:10px 20px;cursor:pointer;font-size:.9rem;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s}
+.tabs .tab.active{color:#6366f1;border-bottom-color:#6366f1;font-weight:600}
+.package-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.package-card{border:2px solid #e5e7eb;border-radius:12px;padding:24px;text-align:center;transition:all .2s;cursor:pointer}
+.package-card.current{border-color:#6366f1;background:#eef2ff}
+.package-card h3{font-size:1.1rem;margin-bottom:8px}
+.package-card .price{font-size:1.6rem;font-weight:700;color:#6366f1}
+.table{width:100%;border-collapse:collapse;font-size:.85rem}
+.table th,.table td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb}
+.table th{background:#f8fafc;font-weight:600;color:#64748b}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:600}
+.badge-green{background:#dcfce7;color:#16a34a}
+.badge-blue{background:#dbeafe;color:#2563eb}
+.badge-yellow{background:#fef9c3;color:#a16207}
+.badge-red{background:#fee2e2;color:#dc2626}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+<span>原型预览 — 用户端 Web 应用</span>
+<a href="index.html">← 返回原型首页</a>
+</div>
+
+<div class="layout">
+<div class="sidebar">
+<div class="logo">AI 创作平台</div>
+<div class="menu-group">
+<div class="menu-group-title">工作台</div>
+<a class="menu-item active" onclick="showPage('dashboard')">📊 仪表盘</a>
+<a class="menu-item" onclick="showPage('create')">➕ 创建任务</a>
+<a class="menu-item" onclick="showPage('tasks')">📋 我的任务</a>
+</div>
+<div class="menu-group">
+<div class="menu-group-title">作品</div>
+<a class="menu-item" onclick="showPage('novels')">📖 小说作品</a>
+<a class="menu-item" onclick="showPage('videos')">🎬 视频作品</a>
+<a class="menu-item" onclick="showPage('square')">🏪 作品广场</a>
+</div>
+<div class="menu-group">
+<div class="menu-group-title">账户</div>
+<a class="menu-item" onclick="showPage('package')">📦 套餐管理</a>
+<a class="menu-item" onclick="showPage('recharge')">💰 充值</a>
+<a class="menu-item" onclick="showPage('billing')">📄 消费记录</a>
+<a class="menu-item" onclick="showPage('platforms')">🔗 平台绑定</a>
+<a class="menu-item" onclick="showPage('settings')">⚙️ 设置</a>
+</div>
+</div>
+
+<div class="main">
+
+<!-- 仪表盘 -->
+<div id="page-dashboard" class="page active">
+<div class="topbar">
+<h1>仪表盘</h1>
+<div class="user-info">
+<div class="balance">余额: <span>¥ 88.30</span></div>
+<div style="width:36px;height:36px;background:#6366f1;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.9rem">U</div>
+</div>
+</div>
+<div class="stats">
+<div class="stat-card"><div class="label">进行中任务</div><div class="value">3</div><div class="sub">2 排队中</div></div>
+<div class="stat-card"><div class="label">已完成作品</div><div class="value">12</div><div class="sub">5 小说 · 7 视频</div></div>
+<div class="stat-card"><div class="label">本月消费</div><div class="value">¥42.50</div><div class="sub">小说¥18 · 视频¥24.50</div></div>
+<div class="stat-card"><div class="label">当前套餐</div><div class="value" style="font-size:1.2rem">进阶版</div><div class="sub">小说+视频</div></div>
+</div>
+<div class="card">
+<h2>进行中的任务</h2>
+<div class="task-list">
+<div class="task-item">
+<div class="status running"></div>
+<div class="info">
+<h4>《龙族传说》 — 玄幻 · 长篇</h4>
+<p>章节写作中：第 12/30 章 · 预估剩余 45 分钟</p>
+<div class="progress-bar"><div class="fill" style="width:65%"></div></div>
+</div>
+<span class="badge badge-green">生成中</span>
+</div>
+<div class="task-item">
+<div class="status running"></div>
+<div class="info">
+<h4>龙族传说 · 视频制作</h4>
+<p>TTS 配音中：第 3/12 集 · 预估剩余 30 分钟</p>
+<div class="progress-bar"><div class="fill" style="width:40%"></div></div>
+</div>
+<span class="badge badge-green">生成中</span>
+</div>
+<div class="task-item">
+<div class="status queued"></div>
+<div class="info">
+<h4>《霸总的甜蜜陷阱》 — 霸总 · 短篇</h4>
+<p>排队位置：第 5 · 预估等待 25 分钟</p>
+</div>
+<span class="badge badge-yellow">排队中</span>
+</div>
+</div>
+</div>
+</div>
+
+<!-- 创建任务 -->
+<div id="page-create" class="page">
+<div class="topbar"><h1>创建任务</h1></div>
+<div class="card">
+<h2>Step 1 — 选择创作方式</h2>
+<div class="mode-grid">
+<div class="mode-card selected" onclick="this.classList.toggle('selected')">
+<div class="icon">📖</div>
+<h3>只生成小说</h3>
+<p>微/短/中/长/超长篇</p>
+</div>
+<div class="mode-card" onclick="this.classList.toggle('selected')">
+<div class="icon">📖🎬</div>
+<h3>小说 + 视频</h3>
+<p>AI 创作并自动制作视频</p>
+</div>
+<div class="mode-card" onclick="this.classList.toggle('selected')">
+<div class="icon">📥🎬</div>
+<h3>外部小说 → 视频</h3>
+<p>导入已有小说生成视频</p>
+</div>
+<div class="mode-card" onclick="this.classList.toggle('selected')">
+<div class="icon">📰🎬</div>
+<h3>资讯 → 视频</h3>
+<p>新闻资讯智能视频化</p>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>Step 2 — 小说配置</h2>
+<div class="form-group">
+<label>篇幅选择</label>
+<div class="options">
+<div class="option" onclick="selectOption(this)">微小说 (1-5千字)</div>
+<div class="option" onclick="selectOption(this)">短篇 (0.5-3万字)</div>
+<div class="option selected" onclick="selectOption(this)">中篇 (3-10万字)</div>
+<div class="option" onclick="selectOption(this)">长篇 (10-50万字)</div>
+<div class="option" onclick="selectOption(this)">超长篇 (50万+)</div>
+<div class="option" onclick="selectOption(this)">🎲 随机</div>
+</div>
+</div>
+<div class="form-group">
+<label>题材选择</label>
+<div class="options">
+<div class="option" onclick="selectOption(this)">👶 儿童故事</div>
+<div class="option selected" onclick="selectOption(this)">🗡️ 男频</div>
+<div class="option" onclick="selectOption(this)">💕 女频</div>
+<div class="option" onclick="selectOption(this)">🎲 随机</div>
+</div>
+</div>
+<div class="form-group">
+<label>男频子分类 (可多选)</label>
+<div class="options">
+<div class="option selected" onclick="this.classList.toggle('selected')">玄幻</div>
+<div class="option" onclick="this.classList.toggle('selected')">仙侠</div>
+<div class="option selected" onclick="this.classList.toggle('selected')">军事</div>
+<div class="option" onclick="this.classList.toggle('selected')">都市</div>
+<div class="option" onclick="this.classList.toggle('selected')">科幻</div>
+<div class="option" onclick="this.classList.toggle('selected')">历史</div>
+<div class="option" onclick="this.classList.toggle('selected')">游戏</div>
+<div class="option" onclick="this.classList.toggle('selected')">悬疑</div>
+<div class="option" onclick="this.classList.toggle('selected')">言情</div>
+<div class="option" onclick="this.classList.toggle('selected')">🎲 随机</div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>Step 3 — 视频配置 (可选)</h2>
+<div class="form-group">
+<label>画面模式</label>
+<div class="options">
+<div class="option selected" onclick="selectOption(this)">🎨 AI 生成画面</div>
+<div class="option" onclick="selectOption(this)">🖼️ 纯图片</div>
+<div class="option" onclick="selectOption(this)">📥 导入素材</div>
+<div class="option" onclick="selectOption(this)">🎲 随机</div>
+</div>
+</div>
+<div class="form-group">
+<label>语音配置</label>
+<div class="options">
+<div class="option selected" onclick="this.classList.toggle('selected')">启用语音</div>
+<div class="option" onclick="this.classList.toggle('selected')">口型同步</div>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap">
+<label style="font-size:.85rem">语速: <input type="range" min="50" max="200" value="100" style="width:120px"> <span>1.0x</span></label>
+<label style="font-size:.85rem">音色: <select style="padding:4px 8px;border-radius:4px;border:1px solid #e5e7eb"><option>默认</option><option>男声 A</option><option>女声 A</option><option>童声</option></select></label>
+</div>
+</div>
+<div class="form-group">
+<label>字幕与音乐</label>
+<div class="options">
+<div class="option selected" onclick="this.classList.toggle('selected')">启用字幕</div>
+<div class="option selected" onclick="this.classList.toggle('selected')">背景音乐</div>
+</div>
+<div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap">
+<label style="font-size:.85rem">字体: <select style="padding:4px 8px;border-radius:4px;border:1px solid #e5e7eb"><option>默认</option><option>黑体</option><option>宋体</option><option>楷体</option></select></label>
+<label style="font-size:.85rem">颜色: <input type="color" value="#FFFFFF" style="width:32px;height:24px"></label>
+<label style="font-size:.85rem">位置: <select style="padding:4px 8px;border-radius:4px;border:1px solid #e5e7eb"><option>底部</option><option>顶部</option><option>居中</option></select></label>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>Step 4 — API 偏好与确认</h2>
+<div class="form-group">
+<label>API 偏好</label>
+<div class="options">
+<div class="option selected" onclick="selectOption(this)">🤖 全自动</div>
+<div class="option" onclick="selectOption(this)">DeepSeek</div>
+<div class="option" onclick="selectOption(this)">Gemini</div>
+<div class="option" onclick="selectOption(this)">OpenAI</div>
+</div>
+</div>
+<div style="background:#f8fafc;border-radius:8px;padding:16px;margin-bottom:16px">
+<p style="font-size:.9rem;color:#64748b">预估消费：<strong style="color:#1e293b">¥ 8.50 ~ 12.00</strong></p>
+<p style="font-size:.85rem;color:#94a3b8;margin-top:4px">当前余额：¥88.30</p>
+</div>
+<button class="btn btn-primary" style="width:100%;padding:14px;font-size:1rem">🚀 开始创建</button>
+</div>
+</div>
+
+<!-- 我的任务 -->
+<div id="page-tasks" class="page">
+<div class="topbar"><h1>我的任务</h1></div>
+<div class="card">
+<div class="task-list">
+<div class="task-item">
+<div class="status running"></div>
+<div class="info">
+<h4>《龙族传说》</h4>
+<p>玄幻·长篇 | 写作中 第12/30章 | 预估剩余45min</p>
+<div class="progress-bar"><div class="fill" style="width:65%"></div></div>
+</div>
+<span class="badge badge-green">运行中</span>
+</div>
+<div class="task-item">
+<div class="status queued"></div>
+<div class="info">
+<h4>《霸总的甜蜜陷阱》</h4>
+<p>霸总·短篇 | 排队第5位 | 预估等待25min</p>
+</div>
+<span class="badge badge-yellow">排队中</span>
+</div>
+<div class="task-item">
+<div class="status done"></div>
+<div class="info">
+<h4>《星际迷途》</h4>
+<p>科幻·中篇 | 已完成 | 消耗¥6.20</p>
+<div class="progress-bar"><div class="fill" style="width:100%"></div></div>
+</div>
+<span class="badge badge-blue">已完成</span>
+</div>
+</div>
+</div>
+<div class="card" style="background:#f0fdf4;border-color:#bbf7d0">
+<h2 style="color:#16a34a">📋 任务详情 — 《龙族传说》</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+<div><span style="color:#64748b;font-size:.85rem">类型</span><br><strong>玄幻 · 长篇</strong></div>
+<div><span style="color:#64748b;font-size:.85rem">排队</span><br><strong>无（运行中）</strong></div>
+<div><span style="color:#64748b;font-size:.85rem">预估剩余</span><br><strong>45 分钟</strong></div>
+</div>
+<table class="table">
+<tr><th>Agent</th><th>状态</th><th>耗时</th><th>备注</th></tr>
+<tr><td>✅ 趋势分析</td><td><span class="badge badge-blue">完成</span></td><td>3m12s</td><td></td></tr>
+<tr><td>✅ 风格解析</td><td><span class="badge badge-blue">完成</span></td><td>2m45s</td><td></td></tr>
+<tr><td>✅ 策划大纲</td><td><span class="badge badge-blue">完成</span></td><td>5m20s</td><td>引用：麦基冲突理论 + 黄金三章</td></tr>
+<tr><td>🔄 章节写作</td><td><span class="badge badge-green">进行中</span></td><td>-</td><td>第12/30章</td></tr>
+<tr><td>○ 润色</td><td><span class="badge badge-yellow">等待</span></td><td>-</td><td></td></tr>
+<tr><td>○ 审计</td><td><span class="badge badge-yellow">等待</span></td><td>-</td><td></td></tr>
+<tr><td>○ 冲突校验</td><td><span class="badge badge-yellow">等待</span></td><td>-</td><td></td></tr>
+<tr><td>○ 修订</td><td><span class="badge badge-yellow">等待</span></td><td>-</td><td></td></tr>
+</table>
+<p style="margin-top:12px;font-size:.85rem;color:#64748b">预估消耗：¥12.50 | 当前余额：¥88.30</p>
+</div>
+</div>
+
+<!-- 小说作品 -->
+<div id="page-novels" class="page">
+<div class="topbar"><h1>小说作品</h1></div>
+<div class="tabs">
+<div class="tab active">全部</div>
+<div class="tab">儿童故事</div>
+<div class="tab">男频</div>
+<div class="tab">女频</div>
+</div>
+<div class="work-grid">
+<div class="work-card">
+<div class="cover">📖</div>
+<div class="body">
+<h3>《龙族传说》</h3>
+<p>玄幻 · 长篇 · 32万字 · ⭐ 4.5</p>
+<div class="actions">
+<a href="#">下载</a><a href="#">发布广场</a><a href="#">发布番茄</a><a href="#" style="color:#ef4444">删除</a>
+</div>
+</div>
+</div>
+<div class="work-card">
+<div class="cover" style="background:linear-gradient(135deg,#ec4899,#f43f5e)">💕</div>
+<div class="body">
+<h3>《霸总的秘密》</h3>
+<p>霸总 · 短篇 · 2.8万字 · ⭐ 4.2</p>
+<div class="actions">
+<a href="#">下载</a><a href="#" style="background:#dcfce7;color:#16a34a">已发布 ✓</a><a href="#" style="color:#ef4444">删除</a>
+</div>
+</div>
+</div>
+<div class="work-card">
+<div class="cover" style="background:linear-gradient(135deg,#06b6d4,#0284c7)">👶</div>
+<div class="body">
+<h3>《小兔子的冒险》</h3>
+<p>儿童 · 3-6岁 · 微小说 · 3千字</p>
+<div class="actions">
+<a href="#">下载</a><a href="#">发布广场</a><a href="#" style="color:#ef4444">删除</a>
+</div>
+</div>
+</div>
+<div class="work-card">
+<div class="cover" style="background:linear-gradient(135deg,#f59e0b,#d97706)">🔍</div>
+<div class="body">
+<h3>《迷雾之城》</h3>
+<p>悬疑 · 中篇 · 8万字 · ⭐ 4.7</p>
+<div class="actions">
+<a href="#">下载</a><a href="#">发布广场</a><a href="#" style="color:#ef4444">删除</a>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- 视频作品 -->
+<div id="page-videos" class="page">
+<div class="topbar"><h1>视频作品</h1></div>
+<div class="tabs">
+<div class="tab active">全部</div>
+<div class="tab">小说类</div>
+<div class="tab">资讯类</div>
+</div>
+<div class="card">
+<h2>📁 龙族传说 (小说视频 · 12集)</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:12px">
+<div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center">
+<div style="background:#1e293b;height:100px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:2rem;margin-bottom:8px">▶</div>
+<p style="font-size:.85rem">第1集 03:25</p>
+</div>
+<div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center">
+<div style="background:#1e293b;height:100px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:2rem;margin-bottom:8px">▶</div>
+<p style="font-size:.85rem">第2集 04:10</p>
+</div>
+<div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center">
+<div style="background:#1e293b;height:100px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:2rem;margin-bottom:8px">▶</div>
+<p style="font-size:.85rem">第3集 03:50</p>
+</div>
+<div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center;color:#94a3b8">+9 集</div>
+</div>
+<div style="display:flex;gap:8px">
+<button class="btn btn-outline" style="font-size:.8rem">全部下载</button>
+<button class="btn btn-primary" style="font-size:.8rem">发布抖音</button>
+<button class="btn btn-outline" style="font-size:.8rem">发布小红书</button>
+</div>
+</div>
+<div class="card">
+<h2>🎬 全球AI峰会速览 (资讯视频)</h2>
+<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+<div style="background:#1e293b;width:200px;height:112px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:2rem;flex-shrink:0">▶</div>
+<div>
+<p style="font-size:.85rem;color:#64748b;margin-bottom:8px">时长 02:30 · 资讯类 · 双语</p>
+<div style="display:flex;gap:8px">
+<button class="btn btn-outline" style="font-size:.8rem">下载</button>
+<button class="btn btn-primary" style="font-size:.8rem">发布抖音</button>
+<button class="btn btn-outline" style="font-size:.8rem">发布广场</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- 广场 -->
+<div id="page-square" class="page">
+<div class="topbar"><h1>作品广场</h1></div>
+<div class="tabs">
+<div class="tab active">推荐</div>
+<div class="tab">小说</div>
+<div class="tab">视频</div>
+<div class="tab">儿童</div>
+</div>
+<div class="work-grid">
+<div class="work-card"><div class="cover">📖</div><div class="body"><h3>《剑来》AI续写</h3><p>玄幻 · 长篇 · by 用户A · ⭐4.8</p></div></div>
+<div class="work-card"><div class="cover" style="background:linear-gradient(135deg,#ec4899,#f43f5e)">🎬</div><div class="body"><h3>AI创业浪潮</h3><p>资讯视频 · 03:20 · by 用户B</p></div></div>
+<div class="work-card"><div class="cover" style="background:linear-gradient(135deg,#06b6d4,#0284c7)">👶</div><div class="body"><h3>《森林音乐会》</h3><p>儿童 · 3-6岁 · by 用户C</p></div></div>
+<div class="work-card"><div class="cover" style="background:linear-gradient(135deg,#f59e0b,#d97706)">📖</div><div class="body"><h3>《冰封战线》</h3><p>军事 · 中篇 · by 用户D · ⭐4.6</p></div></div>
+</div>
+</div>
+
+<!-- 套餐 -->
+<div id="page-package" class="page">
+<div class="topbar"><h1>套餐管理</h1></div>
+<div class="package-grid">
+<div class="package-card">
+<h3>基础版</h3>
+<div class="price">¥0.05<span style="font-size:.8rem;color:#94a3b8">/千字</span></div>
+<p style="font-size:.85rem;color:#64748b;margin:8px 0">纯小说</p>
+<button class="btn btn-outline" style="width:100%;margin-top:12px">切换</button>
+</div>
+<div class="package-card current">
+<h3>进阶版 <span class="badge badge-blue">当前</span></h3>
+<div class="price">¥0.08+<span style="font-size:.8rem;color:#94a3b8">¥0.15/秒</span></div>
+<p style="font-size:.85rem;color:#64748b;margin:8px 0">小说+视频</p>
+<button class="btn btn-primary" style="width:100%;margin-top:12px" disabled>当前套餐</button>
+</div>
+<div class="package-card">
+<h3>专业版</h3>
+<div class="price">¥0.10+<span style="font-size:.8rem;color:#94a3b8">¥0.20/秒</span></div>
+<p style="font-size:.85rem;color:#64748b;margin:8px 0">全功能+发布</p>
+<button class="btn btn-outline" style="width:100%;margin-top:12px">升级</button>
+</div>
+<div class="package-card">
+<h3>企业版</h3>
+<div class="price">定制</div>
+<p style="font-size:.85rem;color:#64748b;margin:8px 0">API对接</p>
+<button class="btn btn-outline" style="width:100%;margin-top:12px">联系我们</button>
+</div>
+</div>
+</div>
+
+<!-- 充值 -->
+<div id="page-recharge" class="page">
+<div class="topbar"><h1>充值</h1></div>
+<div class="card">
+<h2>当前余额</h2>
+<div style="font-size:2.5rem;font-weight:800;color:#6366f1;margin:12px 0">¥ 88.30</div>
+</div>
+<div class="card">
+<h2>选择充值金额</h2>
+<div class="options" style="margin-bottom:20px">
+<div class="option" onclick="selectOption(this)">¥50</div>
+<div class="option selected" onclick="selectOption(this)">¥100</div>
+<div class="option" onclick="selectOption(this)">¥200</div>
+<div class="option" onclick="selectOption(this)">¥500</div>
+<div class="option" onclick="selectOption(this)">¥1000</div>
+<div class="option" onclick="selectOption(this)">自定义</div>
+</div>
+<h2>支付方式</h2>
+<div class="options" style="margin:12px 0 20px">
+<div class="option selected" onclick="selectOption(this)">💚 微信支付</div>
+<div class="option" onclick="selectOption(this)">🔵 支付宝</div>
+</div>
+<button class="btn btn-primary" style="width:100%;padding:14px;font-size:1rem">确认充值 ¥100</button>
+</div>
+</div>
+
+<!-- 消费记录 -->
+<div id="page-billing" class="page">
+<div class="topbar"><h1>消费记录</h1></div>
+<div class="card">
+<table class="table">
+<thead><tr><th>时间</th><th>任务</th><th>类型</th><th>数量</th><th>金额</th></tr></thead>
+<tbody>
+<tr><td>2026-04-01</td><td>《龙族传说》</td><td>小说生成</td><td>32万字</td><td>-¥25.60</td></tr>
+<tr><td>2026-04-01</td><td>龙族传说·视频</td><td>视频制作</td><td>36分钟</td><td>-¥324.00</td></tr>
+<tr><td>2026-03-30</td><td>充值</td><td>微信支付</td><td>-</td><td style="color:#22c55e">+¥500.00</td></tr>
+<tr><td>2026-03-28</td><td>《霸总的秘密》</td><td>小说生成</td><td>2.8万字</td><td>-¥2.24</td></tr>
+<tr><td>2026-03-25</td><td>AI峰会速览</td><td>资讯视频</td><td>2.5分钟</td><td>-¥22.50</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 平台绑定 -->
+<div id="page-platforms" class="page">
+<div class="topbar"><h1>平台账号绑定</h1></div>
+<div class="card">
+<div style="display:grid;gap:16px">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:16px;background:#f8fafc;border-radius:8px">
+<div style="display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🎵</span><div><strong>抖音</strong><br><span style="font-size:.8rem;color:#64748b">用于视频自动发布</span></div></div>
+<button class="btn btn-primary" style="font-size:.8rem">绑定账号</button>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;padding:16px;background:#f8fafc;border-radius:8px">
+<div style="display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">📕</span><div><strong>小红书</strong><br><span style="font-size:.8rem;color:#64748b">用于视频/图文发布</span></div></div>
+<button class="btn btn-primary" style="font-size:.8rem">绑定账号</button>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;padding:16px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0">
+<div style="display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🍅</span><div><strong>番茄小说</strong> <span class="badge badge-green">已绑定</span><br><span style="font-size:.8rem;color:#64748b">作者：AI创作者001</span></div></div>
+<button class="btn btn-outline" style="font-size:.8rem">解除绑定</button>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;padding:16px;background:#f8fafc;border-radius:8px">
+<div style="display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">📚</span><div><strong>起点</strong><br><span style="font-size:.8rem;color:#64748b">用于小说发布</span></div></div>
+<button class="btn btn-primary" style="font-size:.8rem">绑定账号</button>
+</div>
+</div>
+</div>
+</div>
+
+<!-- 设置 -->
+<div id="page-settings" class="page">
+<div class="topbar"><h1>设置</h1></div>
+<div class="card">
+<h2>个人资料</h2>
+<div style="display:grid;gap:12px;max-width:400px">
+<label style="font-size:.9rem">昵称<br><input type="text" value="AI创作者" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px"></label>
+<label style="font-size:.9rem">邮箱<br><input type="email" value="user@example.com" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px"></label>
+<label style="font-size:.9rem">手机<br><input type="tel" value="138****1234" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px"></label>
+<button class="btn btn-primary" style="width:120px">保存</button>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+
+<script>
+function showPage(name){
+document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+document.getElementById('page-'+name).classList.add('active');
+document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));
+event.target.classList.add('active');
+}
+function selectOption(el){
+el.parentElement.querySelectorAll('.option').forEach(o=>o.classList.remove('selected'));
+el.classList.add('selected');
+}
+</script>
+</body>
+</html>
