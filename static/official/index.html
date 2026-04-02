@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI智能内容创作平台 - 产品官网</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        /* 导航栏 */
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+        
+        .nav-links a {
+            color: #4a5568;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: #667eea;
+        }
+        
+        .nav-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .btn {
+            padding: 0.5rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.3s;
+            cursor: pointer;
+            border: none;
+            font-size: 0.95rem;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        /* 英雄区域 */
+        .hero {
+            padding: 120px 0 80px;
+            color: white;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1.5rem;
+            font-weight: 800;
+            line-height: 1.2;
+        }
+        
+        .hero p {
+            font-size: 1.25rem;
+            max-width: 800px;
+            margin: 0 auto 2rem;
+            opacity: 0.9;
+        }
+        
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 2rem;
+        }
+        
+        /* 功能区域 */
+        .section {
+            padding: 80px 0;
+        }
+        
+        .section-title {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        
+        .section-title h2 {
+            font-size: 2.5rem;
+            color: #2d3748;
+            margin-bottom: 1rem;
+        }
+        
+        .section-title p {
+            color: #718096;
+            font-size: 1.125rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+        
+        .feature-card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        }
+        
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .feature-card h3 {
+            font-size: 1.25rem;
+            color: #2d3748;
+            margin-bottom: 0.75rem;
+        }
+        
+        .feature-card p {
+            color: #718096;
+            line-height: 1.6;
+        }
+        
+        /* 下载中心 */
+        .download-section {
+            background: #f7fafc;
+            border-radius: 20px;
+            padding: 3rem;
+            margin-top: 3rem;
+        }
+        
+        .download-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+        
+        .download-card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        }
+        
+        .download-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* API文档区域 */
+        .api-section {
+            background: #2d3748;
+            color: white;
+            border-radius: 20px;
+            padding: 3rem;
+            margin-top: 3rem;
+        }
+        
+        .api-section h3 {
+            font-size: 1.75rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .api-endpoints {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+        }
+        
+        .endpoint {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .method {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 1rem;
+        }
+        
+        .method.get {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .method.post {
+            background: #4299e1;
+            color: white;
+        }
+        
+        /* 页脚 */
+        .footer {
+            background: #2d3748;
+            color: white;
+            padding: 4rem 0 2rem;
+            margin-top: 4rem;
+        }
+        
+        .footer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 3rem;
+            margin-bottom: 3rem;
+        }
+        
+        .footer-column h4 {
+            font-size: 1.125rem;
+            margin-bottom: 1.5rem;
+            color: #cbd5e0;
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 0.75rem;
+        }
+        
+        .footer-links a {
+            color: #a0aec0;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+        }
+        
+        .copyright {
+            text-align: center;
+            padding-top: 2rem;
+            border-top: 1px solid #4a5568;
+            color: #a0aec0;
+            font-size: 0.875rem;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .nav-links {
+                display: none;
+            }
+            
+            .hero-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .btn {
+                width: 100%;
+                max-width: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="container nav-container">
+            <a href="/" class="logo">AI创作平台</a>
+            <ul class="nav-links">
+                <li><a href="#features">功能特色</a></li>
+                <li><a href="#pricing">定价方案</a></li>
+                <li><a href="#download">App下载</a></li>
+                <li><a href="#api">API文档</a></li>
+                <li><a href="#openclaw">OpenClaw接入</a></li>
+            </ul>
+            <div class="nav-buttons">
+                <a href="/login" class="btn btn-secondary">登录</a>
+                <a href="/register" class="btn btn-primary">免费注册</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 英雄区域 -->
+    <section class="hero">
+        <div class="container">
+            <h1>一站式AI内容创作平台</h1>
+            <p>AI自动生成小说 + 智能制作视频 + 多平台一键发布。从创意到成品，全程自动化，让创作变得简单高效。</p>
+            <div class="hero-buttons">
+                <a href="#download" class="btn btn-primary">立即体验</a>
+                <a href="#pricing" class="btn btn-secondary">查看定价</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- 功能特色 -->
+    <section id="features" class="section">
+        <div class="container">
+            <div class="section-title">
+                <h2>核心功能</h2>
+                <p>集成了AI小说生成、视频制作、内容管理、多平台发布等完整创作流程</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📚</div>
+                    <h3>AI小说生成</h3>
+                    <p>7个Agent协同工作，自动生成微小说、短篇、中篇、长篇小说，支持儿童故事、男频、女频等多种题材。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎬</div>
+                    <h3>智能视频制作</h3>
+                    <p>从AI小说、外部小说、资讯三种来源生成短视频，支持文字生成画面、图片模式、导入素材等多种模式。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h3>多平台发布</h3>
+                    <p>一键发布到抖音、小红书、番茄小说、起点中文网等平台，扩大作品影响力。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💰</div>
+                    <h3>灵活付费模式</h3>
+                    <p>按量计费 + 套餐系统，支持支付宝/微信支付，满足不同用户需求。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔧</div>
+                    <h3>开放API接口</h3>
+                    <p>提供完整的RESTful API和WebSocket接口，支持第三方系统集成。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>OpenClaw集成</h3>
+                    <p>支持OpenClaw协议，可与OpenClaw生态系统无缝对接。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 下载中心 -->
+    <section id="download" class="section">
+        <div class="container">
+            <div class="section-title">
+                <h2>多端下载</h2>
+                <p>支持多种设备平台，随时随地创作内容</p>
+            </div>
+            <div class="download-section">
+                <div class="download-grid">
+                    <div class="download-card">
+                        <div class="download-icon">📱</div>
+                        <h3>iOS App</h3>
+                        <p>App Store下载</p>
+                        <a href="#" class="btn btn-primary" style="margin-top: 1rem;">下载</a>
+                    </div>
+                    <div class="download-card">
+                        <div class="download-icon">🤖</div>
+                        <h3>Android App</h3>
+                        <p>Google Play下载</p>
+                        <a href="#" class="btn btn-primary" style="margin-top: 1rem;">下载</a>
+                    </div>
+                    <div class="download-card">
+                        <div class="download-icon">💬</div>
+                        <h3>微信小程序</h3>
+                        <p>微信内直接使用</p>
+                        <a href="#" class="btn btn-primary" style="margin-top: 1rem;">打开</a>
+                    </div>
+                    <div class="download-card">
+                        <div class="download-icon">🎵</div>
+                        <h3>抖音小程序</h3>
+                        <p>抖音内直接创作</p>
+                        <a href="#" class="btn btn-primary" style="margin-top: 1rem;">打开</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- API文档 -->
+    <section id="api" class="section">
+        <div class="container">
+            <div class="section-title">
+                <h2>API文档</h2>
+                <p>完整的API接口文档，支持快速集成</p>
+            </div>
+            <div class="api-section">
+                <h3>RESTful API</h3>
+                <p>所有API请求都需要在Header中包含Authorization: Bearer {API_KEY}</p>
+                
+                <div class="api-endpoints">
+                    <div class="endpoint">
+                        <span class="method get">GET</span>
+                        <code>/api/v1/tasks/{task_id}</code>
+                        <p>获取任务详情</p>
+                    </div>
+                    <div class="endpoint">
+                        <span class="method post">POST</span>
+                        <code>/api/v1/tasks/</code>
+                        <p>创建新任务</p>
+                    </div>
+                    <div class="endpoint">
+                        <span class="method get">GET</span>
+                        <code>/api/v1/user/me</code>
+                        <p>获取当前用户信息</p>
+                    </div>
+                    <div class="endpoint">
+                        <span class="method get">GET</span>
+                        <code>/api/v1/payment/packages</code>
+                        <p>获取套餐列表</p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 2rem;">
+                    <a href="/api-docs" class="btn btn-primary">查看完整API文档</a>
+                    <a href="/api-key" class="btn btn-secondary" style="margin-left: 1rem;">申请API Key</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- OpenClaw接入 -->
+    <section id="openclaw" class="section">
+        <div class="container">
+            <div class="section-title">
+                <h2>OpenClaw接入</h2>
+                <p>与OpenClaw生态系统无缝集成</p>
+            </div>
+            <div class="feature-card">
+                <h3>OpenClaw协议支持</h3>
+                <p>本平台完全支持OpenClaw协议，可以通过以下方式接入：</p>
+                <ul style="margin: 1rem 0; padding-left: 1.5rem;">
+                    <li>通过OpenClaw Agent直接调用平台API</li>
+                    <li>使用OpenClaw WebSocket协议实时接收任务状态更新</li>
+                    <li>集成到OpenClaw工作流中作为内容创作节点</li>
+                </ul>
+                <p>接入文档：<a href="/openclaw-docs" style="color: #667eea;">查看详细接入指南</a></p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-column">
+                    <h4>AI创作平台</h4>
+                    <p>一站式AI内容创作解决方案，让创作变得简单高效。</p>
+                </div>
+                <div class="footer-column">
+                    <h4>产品</h4>
+                    <ul class="footer-links">
+                        <li><a href="#features">功能特色</a></li>
+                        <li><a href="#pricing">定价方案</a></li>
+                        <li><a href="#download">App下载</a

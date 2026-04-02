@@ -1,1 +1,1 @@
-# -*- coding: utf-8 -*-
+# AI Novel Media Agent 应用包

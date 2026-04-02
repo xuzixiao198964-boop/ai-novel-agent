@@ -14,6 +14,11 @@ from app.api.routes import router
 from app.novel_platform.router import router as novel_platform_router
 from app.novel_platform.db import init_db as init_novel_db
 
+# 导入新的API路由
+from app.api.routes_user import router as user_router
+from app.api.routes_payment import router as payment_router
+from app.api.routes_task import router as task_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,6 +58,11 @@ app.add_middleware(
 )
 app.include_router(router)
 app.include_router(novel_platform_router, prefix="/novel-api")
+
+# 包含新的API路由
+app.include_router(user_router)
+app.include_router(payment_router)
+app.include_router(task_router)
 
 
 @app.get("/api/health")
